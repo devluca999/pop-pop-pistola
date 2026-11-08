@@ -6,11 +6,14 @@ import { Town, TOWER_Z } from './town';
 import { Particles, rand, randDir } from './fx';
 import { PostPass } from './post';
 import { C } from './materials';
-import { skyBackdrop } from './textures';
+import { skyBackdrop, NOON_SKY } from './textures';
+import { computeView, RES_H, type StageView, type Insets } from './view';
 
-/** Internal render resolution: the scene and the dither pass run at 384x216, upscaled nearest-neighbour. */
+export { computeView, RES_H, ASPECT_MIN, ASPECT_MAX } from './view';
+export type { StageView } from './view';
+
+/** Reference internal width (16:9). The live width follows the screen: see StageView.resW. */
 export const RES_W = 384;
-export const RES_H = 216;
 /** Near duelist's three-quarter turn (radians) so we see their right side/back; eases toward square when shooting. */
 const NEAR_TURN = 0.68;
 const NEAR_TURN_DRAWN = 0.2;
@@ -20,6 +23,14 @@ const FAR_Z = -4.2;
 /** How far behind the near duelist the camera sits. */
 const CAM_BACK = 2.5;
 const BASE_FOV = 40;
+
+/**
+ * Vertical FOV for an aspect: a little wider on 4:3 (so the tower and near shoulder still fit),
+ * a little tighter on 21:9 (so it never turns into a wide shot).
+ */
+export function fovForAspect(aspect: number): number {
+  return BASE_FOV * Math.pow(16 / 9 / aspect, 0.4);
+}
 
 interface Duelist {
   rig: Rig;
@@ -34,6 +45,17 @@ export class Stage {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(BASE_FOV, RES_W / RES_H, 0.1, 400);
   private post = new PostPass(RES_W, RES_H);
+  private canvas: HTMLCanvasElement;
+  private container: HTMLElement;
+  private ro: ResizeObserver | null = null;
+  /** Exact device-pixel size of the canvas when the browser reports it. */
+  private devBox: { w: number; h: number } | null = null;
+  private viewNow!: StageView;
+  private resizeCbs: ((v: StageView) => void)[] = [];
+  private baseFov = BASE_FOV;
+  /** FOV chosen by frameShot (base for push-ins). */
+  private shotFov = BASE_FOV;
+  private skyW = 0;
   private town = new Town();
   private particles = new Particles();
   private duelists: Record<ScreenSide, Duelist | null> = { near: null, far: null };
@@ -61,15 +83,20 @@ export class Stage {
   private coughCooldown = 0;
   private nearTurn = NEAR_TURN;
 
-  constructor(canvas: HTMLCanvasElement) {
+  /**
+   * @param canvas the game canvas; it is sized to cover `container` (bars included).
+   * @param container element whose size drives the view (default: the canvas's parent).
+   *   Its padding (e.g. safe-area insets) is kept clear of the game image but still gets bars.
+   */
+  constructor(canvas: HTMLCanvasElement, container: HTMLElement = canvas.parentElement ?? document.body) {
+    this.canvas = canvas;
+    this.container = container;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(1);
-    this.renderer.setSize(RES_W, RES_H, false);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
-    canvas.style.imageRendering = 'pixelated';
+    Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', imageRendering: 'pixelated' });
 
-    this.scene.background = skyBackdrop();
     this.scene.fog = new THREE.Fog(0xe6e2da, 90, 330);
 
     // low, cool ambient: shadows read blue-grey against the warm sunlit dirt
@@ -123,8 +150,97 @@ export class Stage {
     this.cloud.visible = false;
     this.scene.add(this.cloud);
 
+    // measure now so the very first frame is already the right size
+    this.applyView(this.measure());
     this.setDuelists('hector', 'dusty');
     this.updateCamera(0);
+    this.observe();
+  }
+
+  // ------------------------------------------------------------ screen size
+  /** Current layout: internal resolution, upscale and the visible image rect. */
+  get view(): StageView {
+    return this.viewNow;
+  }
+
+  /** Called (synchronously, inside the resize observation) whenever the view changes. Returns an unsubscribe. */
+  onResize(cb: (v: StageView) => void): () => void {
+    this.resizeCbs.push(cb);
+    return () => { this.resizeCbs = this.resizeCbs.filter((f) => f !== cb); };
+  }
+
+  private measure(): StageView {
+    const c = this.container;
+    const cssW = c.clientWidth || window.innerWidth;
+    const cssH = c.clientHeight || window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    let dev = { w: Math.round(cssW * dpr), h: Math.round(cssH * dpr) };
+    // prefer the exact device-pixel box, unless it disagrees with css x dpr (stale or emulated)
+    const b = this.devBox;
+    if (b && Math.abs(b.w - cssW * dpr) <= 2 && Math.abs(b.h - cssH * dpr) <= 2) dev = b;
+    const cs = getComputedStyle(c);
+    const pad: Insets = {
+      top: parseFloat(cs.paddingTop) || 0,
+      right: parseFloat(cs.paddingRight) || 0,
+      bottom: parseFloat(cs.paddingBottom) || 0,
+      left: parseFloat(cs.paddingLeft) || 0,
+    };
+    return computeView(cssW, cssH, dev.w, dev.h, pad);
+  }
+
+  private applyView(v: StageView): void {
+    const old = this.viewNow;
+    this.viewNow = v;
+    if (!old || old.devW !== v.devW || old.devH !== v.devH) this.renderer.setSize(v.devW, v.devH, false);
+    this.post.resize(v.resW, v.resH);
+    this.post.place(v.dev.x, v.dev.y, v.dev.w, v.dev.h, v.scale, v.devW, v.devH);
+    if (!old || old.resW !== v.resW) {
+      this.camera.aspect = v.resW / v.resH;
+      this.baseFov = fovForAspect(this.camera.aspect);
+      this.refreshSky();
+      if (old) this.frameShot();
+    }
+  }
+
+  private refreshSky(): void {
+    const w = Math.round(108 * (this.viewNow.resW / this.viewNow.resH));
+    if (w === this.skyW) return;
+    this.skyW = w;
+    this.scene.background = skyBackdrop(NOON_SKY, w);
+  }
+
+  /** Re-measure now and redraw at once, so a resize never shows a stretched or blank frame. */
+  resize(): void {
+    const v = this.measure();
+    const o = this.viewNow;
+    if (o && v.devW === o.devW && v.devH === o.devH && v.resW === o.resW && v.dev.x === o.dev.x && v.dev.y === o.dev.y && v.scale === o.scale) return;
+    this.applyView(v);
+    for (const cb of this.resizeCbs) cb(v);
+    this.render(); // changing canvas size clears it: draw this frame immediately
+  }
+
+  private observe(): void {
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', () => this.resize());
+      return;
+    }
+    this.ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (e.target === this.canvas) {
+          const d = e.devicePixelContentBoxSize?.[0];
+          this.devBox = d ? { w: d.inlineSize, h: d.blockSize } : null;
+        }
+      }
+      this.resize();
+    });
+    this.ro.observe(this.container);
+    try {
+      this.ro.observe(this.canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      this.ro.observe(this.canvas);
+    }
+    // zoom / moving between monitors changes the pixel ratio without a size change
+    window.addEventListener('resize', () => this.resize());
   }
 
   // ------------------------------------------------------------ duelists
@@ -364,36 +480,86 @@ export class Stage {
     const hatCorners = cornersOf(hatBox);
     const camY = Math.max(1.0, nearHead.y * 0.8); // below the brim: we look past the shoulder
     const camZ = NEAR_Z + CAM_BACK;
+    const towerZ = TOWER_Z;
+    const bellTop = this.town.bell.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.3, 0));
     const cam = this.camera;
-    cam.fov = BASE_FOV;
-    cam.aspect = RES_W / RES_H;
-    cam.updateProjectionMatrix();
-    let camX = 0.5;
-    for (let iter = 0; iter < 40; iter++) {
-      const farX = camX * (1 - (camZ - FAR_Z) / (camZ - TOWER_Z));
-      far.rig.root.position.x = farX;
-      far.rig.root.rotation.y = Math.atan2(camX - farX, camZ - FAR_Z);
-      far.rig.root.updateMatrixWorld(true);
-      const farHead = far.rig.head.getWorldPosition(new THREE.Vector3());
-      this.camPos.set(camX, camY, camZ);
-      // aim between the opponent's knees and head so they sit centred, full body
-      this.camLook.set(farX, farHead.y * 1.15, FAR_Z);
-      cam.position.copy(this.camPos);
-      cam.lookAt(this.camLook);
-      cam.updateMatrixWorld();
-      const maxX = (cs: THREE.Vector3[]): number => {
-        let m = -1;
-        for (const c of cs) {
-          const p = c.clone().project(cam);
-          if (p.z < 1) m = Math.max(m, p.x);
-        }
-        return m;
-      };
-      // body in the left third; the hat brim may reach a little further but never the centre
-      if (maxX(bodyCorners) < -0.3 && maxX(hatCorners) < -0.04) break;
-      camX += 0.05;
+    cam.aspect = this.viewNow.resW / this.viewNow.resH;
+    const ndc = (v: THREE.Vector3): THREE.Vector3 => v.clone().project(cam);
+    // Start from the aspect's FOV; widen a little if the rival's feet or the bell would leave the frame.
+    for (let widen = 0; widen <= 14; widen++) {
+      cam.fov = this.baseFov + widen;
+      cam.updateProjectionMatrix();
+      let camX = 0.5;
+      for (let iter = 0; iter < 40; iter++) {
+        const farX = camX * (1 - (camZ - FAR_Z) / (camZ - towerZ));
+        far.rig.root.position.x = farX;
+        far.rig.root.rotation.y = Math.atan2(camX - farX, camZ - FAR_Z);
+        far.rig.root.updateMatrixWorld(true);
+        const farHead = far.rig.head.getWorldPosition(new THREE.Vector3());
+        this.camPos.set(camX, camY, camZ);
+        // aim between the opponent's knees and head so they sit centred, full body
+        this.camLook.set(farX, farHead.y * 1.15, FAR_Z);
+        cam.position.copy(this.camPos);
+        cam.lookAt(this.camLook);
+        cam.updateMatrixWorld();
+        const maxX = (cs: THREE.Vector3[]): number => {
+          let m = -1;
+          for (const c of cs) {
+            const p = c.clone().project(cam);
+            if (p.z < 1) m = Math.max(m, p.x);
+          }
+          return m;
+        };
+        // body in the left third; the hat brim may reach a little further but never the centre
+        if (maxX(bodyCorners) < -0.3 && maxX(hatCorners) < -0.04) break;
+        camX += 0.05;
+      }
+      const feet = ndc(far.rig.root.position);
+      const bell = ndc(bellTop);
+      if (feet.y > -0.94 && bell.y < 0.94) break;
     }
+    this.shotFov = cam.fov;
     far.forward.set(Math.sin(far.rig.root.rotation.y), 0, Math.cos(far.rig.root.rotation.y));
+  }
+
+  /**
+   * Framing check in NDC (-1..1, y up) for tests: near body/hat right edge, rival feet/head,
+   * bell position and the rival-to-bell horizontal offset.
+   */
+  framing(): { aspect: number; fov: number; nearBodyMaxX: number; nearHatMaxX: number; nearVisible: boolean; rivalX: number; rivalFeetY: number; rivalHeadY: number; bellX: number; bellY: number; ok: boolean } {
+    const near = this.duelists.near!;
+    const far = this.duelists.far!;
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    const hat = near.rig.hat;
+    const hp = hat.parent;
+    hp?.remove(hat);
+    const body = new THREE.Box3().setFromObject(near.rig.root);
+    hp?.add(hat);
+    const hatBox = new THREE.Box3().setFromObject(hat);
+    const xs = (b: THREE.Box3) => {
+      let mx = -9;
+      let mn = 9;
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+        const p = new THREE.Vector3(x, y, z).project(cam);
+        mx = Math.max(mx, p.x);
+        mn = Math.min(mn, p.x);
+      }
+      return { mx, mn };
+    };
+    const nb = xs(body);
+    const nh = xs(hatBox);
+    const head = this.world(far.rig.head).add(new THREE.Vector3(0, 0.45, 0)).project(cam);
+    const feet = far.rig.root.position.clone().project(cam);
+    const bell = this.town.bell.getWorldPosition(new THREE.Vector3()).project(cam);
+    const r = {
+      aspect: cam.aspect, fov: cam.fov,
+      nearBodyMaxX: nb.mx, nearHatMaxX: nh.mx, nearVisible: nb.mx > -0.98,
+      rivalX: feet.x, rivalFeetY: feet.y, rivalHeadY: head.y, bellX: bell.x, bellY: bell.y, ok: false,
+    };
+    r.ok = r.nearBodyMaxX < -0.28 && r.nearHatMaxX < 0 && r.nearVisible && Math.abs(r.rivalX) < 0.2 &&
+      r.rivalFeetY > -1 && r.bellY < 1 && r.bellY > r.rivalHeadY && Math.abs(r.bellX - head.x) < 0.15;
+    return r;
   }
 
   private updateCamera(dt: number): void {
@@ -404,7 +570,7 @@ export class Stage {
       const r = 12;
       cam.position.set(Math.sin(a) * r * 0.6 + 1.5, 3.6 + Math.sin(this.time * 0.2) * 0.4, Math.cos(a) * r - 1);
       cam.lookAt(0, 3.2, -14);
-      cam.fov = 42;
+      cam.fov = 42 * (this.baseFov / BASE_FOV);
       cam.updateProjectionMatrix();
       return;
     }
@@ -422,7 +588,7 @@ export class Stage {
     }
     cam.lookAt(look);
     const pk = this.punchAmt * this.punchAmt;
-    cam.fov = BASE_FOV - this.pushCur * (reduced ? 1 : 2) - (reduced ? 2 : 7) * pk;
+    cam.fov = this.shotFov - this.pushCur * (reduced ? 1 : 2) - (reduced ? 2 : 7) * pk;
     cam.updateProjectionMatrix();
   }
 
@@ -486,31 +652,23 @@ export class Stage {
     }
 
     this.updateCamera(dt);
+    this.render();
+  }
 
+  private render(): void {
     this.renderer.setRenderTarget(this.post.target);
     this.renderer.render(this.scene, this.camera);
     this.post.render(this.renderer, this.time, 0);
   }
 
   dispose(): void {
+    this.ro?.disconnect();
     this.post.dispose();
     this.renderer.dispose();
   }
 }
 
-/**
- * Size the canvas to the largest centred 16:9 box in the window, nearest-neighbour upscaled.
- * Uses an integer multiple of 384x216 when that fills at least ~90% of the space, otherwise fills.
- */
-export function fitCanvas(canvas: HTMLCanvasElement): void {
-  const fitW = Math.min(window.innerWidth, (window.innerHeight * 16) / 9);
-  const k = Math.floor(fitW / RES_W);
-  const w = k >= 1 && k * RES_W >= fitW * 0.9 ? k * RES_W : Math.floor(fitW);
-  const h = Math.floor((w * 9) / 16);
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  canvas.style.position = 'absolute';
-  canvas.style.left = `${Math.floor((window.innerWidth - w) / 2)}px`;
-  canvas.style.top = `${Math.floor((window.innerHeight - h) / 2)}px`;
-  canvas.style.imageRendering = 'pixelated';
+/** @deprecated The Stage now sizes the canvas itself (it fills its container). Kept as a no-op. */
+export function fitCanvas(_canvas: HTMLCanvasElement): void {
+  /* no-op */
 }

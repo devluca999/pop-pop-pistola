@@ -1,12 +1,10 @@
 // Standalone preview of the Stage. Keys: 1-0 poses (far), shift+digit poses (near), Q-P fx, F filter, C chars, etc.
-import { Stage, fitCanvas } from './index';
+import { Stage } from './index';
 import type { CharacterId, Pose, FxKind, FakeKind, FilterMode, ScreenSide } from '../types';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
 const stage = new Stage(canvas);
-fitCanvas(canvas);
-addEventListener('resize', () => fitCanvas(canvas));
 
 const chars: CharacterId[] = ['hector', 'dusty', 'mercy'];
 const poses: Pose[] = ['idle', 'ready', 'draw', 'fire', 'hit', 'dead', 'heal', 'win', 'blinded', 'jam'];

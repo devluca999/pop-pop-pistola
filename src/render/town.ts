@@ -24,7 +24,7 @@ export class Town {
   group = new THREE.Group();
   /** Warm point lights inside the hanging lanterns near the duel. */
   lanternLights: THREE.PointLight[] = [];
-  private bell: THREE.Group;
+  bell: THREE.Group;
   private bellSwing = 0;
   private bellVel = 0;
   private doorL!: THREE.Group;
