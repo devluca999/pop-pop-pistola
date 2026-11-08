@@ -18,7 +18,7 @@ html, body {
 }
 #app { position: fixed; inset: 0; background: var(--bg); }
 #game {
-  position: absolute; image-rendering: auto;
+  position: absolute; image-rendering: pixelated; image-rendering: crisp-edges;
   background: #000;
 }
 #crt, #ui { position: absolute; pointer-events: none; }

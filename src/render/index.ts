@@ -2,27 +2,24 @@ import * as THREE from 'three';
 import type { CharacterId, Pose, FxKind, FakeKind, ScreenSide, PostSettings, ViewOptions } from '../types';
 import { buildCharacter, type Rig } from './characters';
 import { Puppet } from './puppet';
-import { Town } from './town';
+import { Town, TOWER_Z } from './town';
 import { Particles, rand, randDir } from './fx';
 import { PostPass } from './post';
 import { C } from './materials';
+import { skyBackdrop } from './textures';
 
-/** Design units of the 16:9 layout (the UI overlay measures in 1/320ths of the canvas width). */
-export const RES_W = 320;
-export const RES_H = 180;
-/** Internal scene resolution bounds (width); height is always 9/16 of it. */
-const INTERNAL_MIN_W = 640;
-const INTERNAL_MAX_W = 1600;
-/** Output (post pass) resolution cap, for perf on huge screens. */
-const OUTPUT_MAX_W = 2560;
+/** Internal render resolution: the scene and the dither pass run at 384x216, upscaled nearest-neighbour. */
+export const RES_W = 384;
+export const RES_H = 216;
+/** Near duelist's three-quarter turn (radians) so we see their right side/back; eases toward square when shooting. */
+const NEAR_TURN = 0.68;
+const NEAR_TURN_DRAWN = 0.2;
 
 const NEAR_Z = 3.0;
-const FAR_Z = -2.5;
-/** World z of the bell tower (church at z -44, tower at local z +1.2; see town.ts). */
-const TOWER_Z = -42.8;
+const FAR_Z = -4.2;
 /** How far behind the near duelist the camera sits. */
-const CAM_BACK = 2.1;
-const BASE_FOV = 34;
+const CAM_BACK = 2.5;
+const BASE_FOV = 40;
 
 interface Duelist {
   rig: Rig;
@@ -35,7 +32,7 @@ interface Duelist {
 export class Stage {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(BASE_FOV, RES_W / RES_H, 0.1, 220);
+  private camera = new THREE.PerspectiveCamera(BASE_FOV, RES_W / RES_H, 0.1, 400);
   private post = new PostPass(RES_W, RES_H);
   private town = new Town();
   private particles = new Particles();
@@ -62,40 +59,40 @@ export class Stage {
   private opts: ViewOptions = { shake: true, reducedMotion: false, reduceFlashing: false };
   private tmp = new THREE.Vector3();
   private coughCooldown = 0;
-  private canvas: HTMLCanvasElement;
-  private outW = 0;
-  private outH = 0;
+  private nearTurn = NEAR_TURN;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(1);
+    this.renderer.setSize(RES_W, RES_H, false);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    canvas.style.imageRendering = 'auto';
+    this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    canvas.style.imageRendering = 'pixelated';
 
-    this.scene.background = skyGradient();
-    this.scene.fog = new THREE.Fog(C.skyHaze, 34, 130);
+    this.scene.background = skyBackdrop();
+    this.scene.fog = new THREE.Fog(0xe6e2da, 90, 330);
 
-    // fill: bleached sky above, warm dirt bounce below
-    const hemi = new THREE.HemisphereLight(0xeef2f0, 0xb08a62, 1.1);
+    // low, cool ambient: shadows read blue-grey against the warm sunlit dirt
+    const hemi = new THREE.HemisphereLight(0xc4c9cf, 0x6a4c34, 1.05);
     this.scene.add(hemi);
-    // warm key: high noon sun almost straight overhead, tipped toward the camera so faces read
-    this.sun = new THREE.DirectionalLight(0xffeccc, 3.6);
-    this.sun.position.set(1.2, 14, 3.5);
-    this.sun.target.position.set(0, 0, 0);
+    // strong warm high-noon key, almost overhead: short, hard shadows under everything
+    this.sun = new THREE.DirectionalLight(0xfff0dc, 3.5);
+    this.sun.position.set(0.6, 14, 7.0);
+    this.sun.target.position.set(0, 0, -4);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
-    sc.left = -12; sc.right = 12; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 40;
-    this.sun.shadow.bias = -0.0008;
-    this.sun.shadow.normalBias = 0.02;
-    this.sun.shadow.radius = 2.5;
+    sc.left = -16; sc.right = 16; sc.top = 22; sc.bottom = -26; sc.near = 1; sc.far = 50;
+    this.sun.shadow.bias = -0.0006;
+    this.sun.shadow.normalBias = 0.03;
     this.scene.add(this.sun, this.sun.target);
-    // cool back light from down the street: outlines silhouettes against the bright ground
-    const back = new THREE.DirectionalLight(0xdfe8ff, 0.9);
-    back.position.set(-2, 4, -12);
-    this.scene.add(back);
+    // warm bounce off the bright street: lights both rows of facades (they face across the street)
+    for (const sx of [-1, 1]) {
+      const fill = new THREE.DirectionalLight(0xf8c08f, 1.25);
+      fill.position.set(sx * 10, 3, 4);
+      fill.target.position.set(0, 2, -6);
+      this.scene.add(fill, fill.target);
+    }
     this.scene.add(this.flashLight);
 
     this.scene.add(this.town.group);
@@ -127,24 +124,7 @@ export class Stage {
     this.scene.add(this.cloud);
 
     this.setDuelists('hector', 'dusty');
-    this.resizeIfNeeded();
     this.updateCamera(0);
-  }
-
-  /** Match render sizes to the canvas's on-screen size (devicePixelRatio aware). */
-  private resizeIfNeeded(): void {
-    const rect = this.canvas.getBoundingClientRect();
-    const cssW = rect.width > 0 ? rect.width : Math.min(window.innerWidth, (window.innerHeight * 16) / 9);
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    const outW = Math.max(INTERNAL_MIN_W, Math.min(OUTPUT_MAX_W, Math.round(cssW * dpr)));
-    const outH = Math.round((outW * 9) / 16);
-    if (outW === this.outW && outH === this.outH) return;
-    this.outW = outW;
-    this.outH = outH;
-    const inW = Math.max(INTERNAL_MIN_W, Math.min(INTERNAL_MAX_W, Math.round(outW / 2)));
-    const inH = Math.round((inW * 9) / 16);
-    this.renderer.setSize(outW, outH, false);
-    this.post.resize(inW, inH, outW / inW);
   }
 
   // ------------------------------------------------------------ duelists
@@ -158,6 +138,8 @@ export class Stage {
     }
     const mk = (id: CharacterId, side: ScreenSide): Duelist => {
       const rig = buildCharacter(id);
+      // noon sun is overhead: a 3x-wide hat would black out its own wearer. Hats skip shadow casting.
+      rig.hat.traverse((o) => { (o as THREE.Mesh).castShadow = false; });
       const z = side === 'near' ? NEAR_Z : FAR_Z;
       rig.root.position.set(0, 0, z);
       rig.root.rotation.y = side === 'near' ? Math.PI : 0;
@@ -180,6 +162,9 @@ export class Stage {
     if (!d) return;
     d.puppet.setPose(pose);
     if (pose === 'dead') this.fx('hatFly', side);
+    if (side === 'near' && pose !== 'flinch' && pose !== 'feint') {
+      this.nearTurn = pose === 'draw' || pose === 'fire' || pose === 'jam' ? NEAR_TURN_DRAWN : NEAR_TURN;
+    }
   }
 
   setDrunk(side: ScreenSide, drunk: boolean): void {
@@ -212,16 +197,16 @@ export class Stage {
     const mouth = this.world(d.rig.mouth);
     switch (kind) {
       case 'muzzle': {
-        P.spawn({ pos: muzzle, color: C.flameCore, size: 0.42, life: 0.07, fade: false });
-        P.spawn({ pos: muzzle.clone().addScaledVector(fwd, 0.25), color: C.flame, size: 0.28, life: 0.09, fade: false });
+        P.spawn({ pos: muzzle, color: C.flameCore, size: 0.3, life: 0.07, fade: false, shape: 'puff' });
+        P.spawn({ pos: muzzle.clone().addScaledVector(fwd, 0.25), color: C.flame, size: 0.2, life: 0.09, fade: false, shape: 'puff' });
         for (let i = 0; i < 10; i++) P.spawn({ pos: muzzle, vel: randDir(0.5, fwd, rand(4, 9)), color: i % 2 ? C.flame : C.gold, size: 0.05, life: rand(0.15, 0.35), gravity: 6 });
         for (let i = 0; i < 3; i++) P.spawn({ pos: muzzle, vel: randDir(0.4, fwd.clone().add(new THREE.Vector3(0, 0.6, 0)), rand(0.4, 1)), color: C.smoke, size: 0.18, life: rand(0.6, 1.1), grow: 1.6, drag: 2, shape: 'puff' });
         this.lightFlash(muzzle, 9, 0.09);
         break;
       }
       case 'shotgunBlast': {
-        P.spawn({ pos: muzzle, color: C.flameCore, size: 0.7, life: 0.09, fade: false });
-        P.spawn({ pos: muzzle.clone().addScaledVector(fwd, 0.4), color: C.flame, size: 0.5, life: 0.11, fade: false });
+        P.spawn({ pos: muzzle, color: C.flameCore, size: 0.42, life: 0.09, fade: false, shape: 'puff' });
+        P.spawn({ pos: muzzle.clone().addScaledVector(fwd, 0.4), color: C.flame, size: 0.3, life: 0.11, fade: false, shape: 'puff' });
         for (let i = 0; i < 20; i++) P.spawn({ pos: muzzle, vel: randDir(0.8, fwd, rand(5, 11)), color: i % 3 ? C.flame : C.flameCore, size: 0.06, life: rand(0.15, 0.4), gravity: 5 });
         for (let i = 0; i < 10; i++) P.spawn({ pos: muzzle.clone().add(new THREE.Vector3(rand(-0.2, 0.2), rand(-0.1, 0.2), 0)), vel: randDir(0.7, fwd.clone().add(new THREE.Vector3(0, 0.4, 0)), rand(0.6, 1.8)), color: i % 2 ? C.smoke : C.cream, size: rand(0.25, 0.4), life: rand(1.2, 2.2), grow: 1.2, drag: 1.6, shape: 'puff' });
         this.lightFlash(muzzle, 14, 0.12);
@@ -349,40 +334,66 @@ export class Stage {
   }
 
   /**
-   * Tight over-the-shoulder shot (refs/map.png, bottom panel): camera at the near duelist's
-   * shoulder height, behind and to their right, so they fill the left third and are cropped
-   * by the frame edge. The far duelist is nudged sideways so the line from the camera through
-   * their head lands on the bell tower: the tower always sits directly behind their head.
+   * Over-the-shoulder shot (refs/map.png, bottom panel). The near duelist stands in the left third,
+   * turned three-quarters so we see their right side and back, cropped by the frame edge below the
+   * knee. The opponent stands centred mid-ground, full body. The far duelist is nudged sideways so
+   * the line from the camera through their head lands on the bell tower, and the camera slides right
+   * until the near duelist (hat included) stays clear of the frame centre.
    */
   private frameShot(): void {
     const near = this.duelists.near;
     const far = this.duelists.far;
     if (!near || !far) return;
+    this.nearTurn = NEAR_TURN;
+    near.rig.root.rotation.y = Math.PI + NEAR_TURN;
     near.rig.root.updateMatrixWorld(true);
     far.rig.root.updateMatrixWorld(true);
-    // Body width without the hat (Hector's hat is 3x his shoulders and would skew it).
     const hat = near.rig.hat;
     const hatParent = hat.parent;
     hatParent?.remove(hat);
-    const box = new THREE.Box3().setFromObject(near.rig.root);
+    const body = new THREE.Box3().setFromObject(near.rig.root);
     hatParent?.add(hat);
-    const halfW = Math.max(Math.abs(box.min.x), Math.abs(box.max.x));
+    const hatBox = new THREE.Box3().setFromObject(hat);
     const nearHead = near.rig.head.getWorldPosition(new THREE.Vector3());
-    // Tuned on Hector (half-width 0.36); wider duelists (Dusty 0.53) shift right and back.
-    const extra = Math.max(0, halfW - 0.36);
-    const camX = 0.55 + extra * 1.6;
-    const camY = Math.max(1.0, nearHead.y - 0.22); // shoulder height
-    // Wider duelists get a little more room so they never hide the opponent.
-    const camZ = NEAR_Z + CAM_BACK + extra * 3;
-    // camera -> far head ray must hit x = 0 at the tower
-    const farX = camX * (1 - (camZ - FAR_Z) / (camZ - TOWER_Z));
-    far.rig.root.position.x = farX;
-    far.rig.root.rotation.y = Math.atan2(camX - farX, camZ - FAR_Z); // face the camera head-on
+    const cornersOf = (b: THREE.Box3): THREE.Vector3[] => {
+      const out: THREE.Vector3[] = [];
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) out.push(new THREE.Vector3(x, y, z));
+      return out;
+    };
+    const bodyCorners = cornersOf(body);
+    const hatCorners = cornersOf(hatBox);
+    const camY = Math.max(1.0, nearHead.y * 0.8); // below the brim: we look past the shoulder
+    const camZ = NEAR_Z + CAM_BACK;
+    const cam = this.camera;
+    cam.fov = BASE_FOV;
+    cam.aspect = RES_W / RES_H;
+    cam.updateProjectionMatrix();
+    let camX = 0.5;
+    for (let iter = 0; iter < 40; iter++) {
+      const farX = camX * (1 - (camZ - FAR_Z) / (camZ - TOWER_Z));
+      far.rig.root.position.x = farX;
+      far.rig.root.rotation.y = Math.atan2(camX - farX, camZ - FAR_Z);
+      far.rig.root.updateMatrixWorld(true);
+      const farHead = far.rig.head.getWorldPosition(new THREE.Vector3());
+      this.camPos.set(camX, camY, camZ);
+      // aim between the opponent's knees and head so they sit centred, full body
+      this.camLook.set(farX, farHead.y * 1.15, FAR_Z);
+      cam.position.copy(this.camPos);
+      cam.lookAt(this.camLook);
+      cam.updateMatrixWorld();
+      const maxX = (cs: THREE.Vector3[]): number => {
+        let m = -1;
+        for (const c of cs) {
+          const p = c.clone().project(cam);
+          if (p.z < 1) m = Math.max(m, p.x);
+        }
+        return m;
+      };
+      // body in the left third; the hat brim may reach a little further but never the centre
+      if (maxX(bodyCorners) < -0.3 && maxX(hatCorners) < -0.04) break;
+      camX += 0.05;
+    }
     far.forward.set(Math.sin(far.rig.root.rotation.y), 0, Math.cos(far.rig.root.rotation.y));
-    far.rig.root.updateMatrixWorld(true);
-    const farHead = far.rig.head.getWorldPosition(new THREE.Vector3());
-    this.camPos.set(camX, camY, camZ);
-    this.camLook.set(farX, farHead.y + 0.25, FAR_Z);
   }
 
   private updateCamera(dt: number): void {
@@ -411,7 +422,7 @@ export class Stage {
     }
     cam.lookAt(look);
     const pk = this.punchAmt * this.punchAmt;
-    cam.fov = BASE_FOV - this.pushCur * (reduced ? 0.8 : 1.6) - (reduced ? 2 : 6) * pk;
+    cam.fov = BASE_FOV - this.pushCur * (reduced ? 1 : 2) - (reduced ? 2 : 7) * pk;
     cam.updateProjectionMatrix();
   }
 
@@ -423,6 +434,11 @@ export class Stage {
     const adt = dt * scale;
     this.time += adt;
 
+    const nd = this.duelists.near;
+    if (nd) {
+      const target = Math.PI + this.nearTurn;
+      nd.rig.root.rotation.y += (target - nd.rig.root.rotation.y) * (1 - Math.exp(-10 * adt));
+    }
     for (const side of ['near', 'far'] as const) {
       const d = this.duelists[side];
       if (!d) continue;
@@ -470,7 +486,6 @@ export class Stage {
     }
 
     this.updateCamera(dt);
-    this.resizeIfNeeded();
 
     this.renderer.setRenderTarget(this.post.target);
     this.renderer.render(this.scene, this.camera);
@@ -483,34 +498,19 @@ export class Stage {
   }
 }
 
-/** Size the canvas to the largest centred 16:9 box in the window (smooth, non-integer scaling). */
+/**
+ * Size the canvas to the largest centred 16:9 box in the window, nearest-neighbour upscaled.
+ * Uses an integer multiple of 384x216 when that fills at least ~90% of the space, otherwise fills.
+ */
 export function fitCanvas(canvas: HTMLCanvasElement): void {
-  const w = Math.floor(Math.min(window.innerWidth, (window.innerHeight * 16) / 9));
+  const fitW = Math.min(window.innerWidth, (window.innerHeight * 16) / 9);
+  const k = Math.floor(fitW / RES_W);
+  const w = k >= 1 && k * RES_W >= fitW * 0.9 ? k * RES_W : Math.floor(fitW);
   const h = Math.floor((w * 9) / 16);
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
   canvas.style.position = 'absolute';
   canvas.style.left = `${Math.floor((window.innerWidth - w) / 2)}px`;
   canvas.style.top = `${Math.floor((window.innerHeight - h) / 2)}px`;
-  canvas.style.imageRendering = 'auto';
-}
-
-/** Vertical sky gradient: pale blue zenith fading to a bleached, hazy horizon. */
-function skyGradient(): THREE.Texture {
-  const c = document.createElement('canvas');
-  c.width = 4;
-  c.height = 256;
-  const g = c.getContext('2d')!;
-  const grd = g.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0, '#9fbfd0');
-  grd.addColorStop(0.35, '#c9dbe0');
-  grd.addColorStop(0.62, '#ece9dc');
-  grd.addColorStop(0.78, '#f4ead4');
-  grd.addColorStop(1, '#efe0c0');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 4, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.magFilter = THREE.LinearFilter;
-  return t;
+  canvas.style.imageRendering = 'pixelated';
 }
