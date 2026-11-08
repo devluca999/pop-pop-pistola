@@ -24,10 +24,10 @@ export class Scope {
     if (time > this.end) this.end = time;
   }
 
-  gain(v = 1, dest?: AudioNode): GainNode {
+  gain(v = 1, dest?: Dest): GainNode {
     const g = this.add(this.ctx.createGain());
     g.gain.value = v;
-    if (dest) g.connect(dest);
+    if (dest) link(g, dest);
     return g;
   }
 
@@ -91,6 +91,14 @@ export class Scope {
       }
     }, ms);
   }
+}
+
+export type Dest = AudioNode | AudioParam;
+
+/** connect() to either a node or a param (TS overloads don't accept the union). */
+export function link(src: AudioNode, dest: Dest): void {
+  if (dest instanceof AudioParam) src.connect(dest);
+  else src.connect(dest);
 }
 
 export const clampFreq = (f: number): number => Math.max(10, Math.min(20000, f));

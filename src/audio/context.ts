@@ -93,7 +93,9 @@ function applyVolumes(): void {
   if (!eng) return;
   const t = eng.ctx.currentTime;
   // squared curve feels more even on a linear slider
-  const set = (g: GainNode, v: number, base: number): void => g.gain.setTargetAtTime(v * v * base, t, 0.03);
+  const set = (g: GainNode, v: number, base: number): void => {
+    g.gain.setTargetAtTime(v * v * base, t, 0.03);
+  };
   set(eng.master, vols.master, BASE.master);
   set(eng.music, vols.music, BASE.music);
   set(eng.sfx, vols.sfx, BASE.sfx);
