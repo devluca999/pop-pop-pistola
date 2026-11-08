@@ -323,7 +323,7 @@ export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
     <p><b>Sister Smokin' Mercy</b>: her lantern flash blinds (no damage) and wins trades outright. Two blinds in a row = <b>Will of God</b>: win that draw to Vaporize (instant win) or Full Heal (once).</p>
     <p><b>Last Stand</b>: at 1 heart your perfect window is wider.</p>
     <h3>KEYBOARD OR GAMEPAD</h3><p>Before each mode, every player picks KEYBOARD or GAMEPAD. Prompts then show that player's own buttons (letters for keys, A B X Y LB RB for pads). In Local Versus, press your LOCK key for keyboard, or A on a pad to take it; ← → on the pad switches sides, B lets go. Character select shows each duelist's skills with your buttons.</p>
-    <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint, A = action. Rebind in Settings.</p>
+    <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint, A = action, START pauses (Esc on keyboard). Rebind in Settings.</p>
   ` });
   const b = btn('BACK', back);
   const el = h('div', { class: 'screen dim' }, panel, h('div', { class: 'menu' }, b));

@@ -32,6 +32,11 @@ export class Input {
    * the rest → P2). Set by the controller screen; a pad missing from the list drives no one.
    */
   padPlayers: (PlayerIndex | null)[] | null = null;
+  /**
+   * True while a duel is live. Pad face/shoulder buttons are then game buttons only (B is a
+   * prompt, not "back"); START or SELECT pauses.
+   */
+  padGameMode = false;
 
   constructor(private settings: () => Settings) {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -124,7 +129,7 @@ export class Input {
         if (down) for (const f of [...this.padBtnL]) if (this.padBtnL.includes(f)) f({ pad: gi, button: bi });
         if (owner === null) {
           // an unassigned pad can still drive menus
-          const m = down ? padMenu(bi) : null;
+          const m = !down ? null : this.padGameMode ? (bi === 8 || bi === 9 ? 'back' : null) : padMenu(bi);
           if (m) this.emitMenu(m);
           continue;
         }
@@ -135,7 +140,7 @@ export class Input {
         else if (down && bi === b.heal) this.emitGame({ player, kind: 'heal', t, pad: true });
         else if (down && bi === b.feint) this.emitGame({ player, kind: 'feint', t, pad: true });
         if (down) {
-          const m = padMenu(bi);
+          const m = this.padGameMode ? (bi === 8 || bi === 9 ? 'back' : null) : padMenu(bi);
           if (m) this.emitMenu(m);
         }
       }

@@ -106,6 +106,7 @@ export class Duel {
     stage.setHalo('far', 0);
     ctx.input.twoPlayers = setup.mode === 'local';
     ctx.input.soloPlayer = setup.mode === 'local' ? 0 : setup.localView;
+    ctx.input.padGameMode = true;
     this.unsub.push(ctx.input.onGame((e) => this.onInput(e)));
     this.unsub.push(ctx.input.onMenu((m) => { if (m === 'back') this.togglePause(); }));
     if (setup.net) {
@@ -806,6 +807,7 @@ export class Duel {
       this.shoutAt(who, 99999);
     }
     this.after(1600, () => {
+      this.ctx.input.padGameMode = false;
       const menu = h('div', { class: 'menu', style: 'position:absolute;left:50%;bottom:12%;transform:translateX(-50%)' });
       const again = h('button', { class: 'sel' }, this.setup.mode === 'online' ? 'REMATCH' : 'RUN IT BACK');
       const quit = h('button', {}, 'MAIN MENU');
@@ -831,7 +833,7 @@ export class Duel {
     if (this.setup.mode === 'online') {
       // Online can't pause: the overlay only asks whether to leave, and the duel keeps running.
       const open = document.getElementById('pause');
-      if (open) open.remove(); else this.showPause(true);
+      if (open) { open.remove(); this.ctx.input.padGameMode = true; } else this.showPause(true);
       return;
     }
     if (this.phase === 'paused') {
@@ -840,6 +842,7 @@ export class Duel {
       for (const t of this.timers) t.at += d;
       this.phase = this.prevPhase;
       this.top.querySelectorAll('#pause').forEach((n) => n.remove());
+      this.ctx.input.padGameMode = true;
       return;
     }
     this.prevPhase = this.phase;
@@ -849,6 +852,8 @@ export class Duel {
   }
   private showPause(online: boolean) {
     this.top.querySelectorAll('#pause').forEach((n) => n.remove());
+    // pad A/B work as menu buttons again while the pause menu is open
+    this.ctx.input.padGameMode = false;
     const panel = h('div', { class: 'screen dim', id: 'pause' });
     panel.append(h('div', { class: 'title-label' }, online ? 'LEAVE THE DUEL?' : 'PAUSED'));
     const m = h('div', { class: 'menu' });
@@ -857,12 +862,13 @@ export class Duel {
     resume.onclick = () => this.togglePause();
     quit.onclick = () => this.exit({ kind: 'menu' });
     m.append(resume, quit);
-    panel.append(m, h('div', { class: 'hint' }, online ? 'The duel keeps running while this is open.' : 'ESC to resume'));
+    panel.append(m, h('div', { class: 'hint' }, online ? 'The duel keeps running while this is open.' : 'ESC / START to resume'));
     this.top.append(panel);
     let sel = 0;
     const btns = [resume, quit];
     const off = this.ctx.input.onMenu((mi) => {
       if (!document.getElementById('pause')) { off(); return; }
+      if (online && mi === 'back') { this.ctx.input.padGameMode = true; return; }
       if (mi === 'up' || mi === 'down') { sel = 1 - sel; btns.forEach((b, k) => b.classList.toggle('sel', k === sel)); }
       if (mi === 'confirm') btns[sel].click();
     });
@@ -963,6 +969,7 @@ export class Duel {
     // Menus and local select expect both keyboard halves again.
     this.ctx.input.twoPlayers = true;
     this.ctx.input.soloPlayer = 0;
+    this.ctx.input.padGameMode = false;
     this.ctx.audio.heartbeat(false);
     this.ctx.stage.setPost({ washLeft: 0, washRight: 0, flash: 0 });
     this.root.remove();
