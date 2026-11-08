@@ -87,6 +87,88 @@ const recipes: Record<SfxName, Recipe> = {
     }
   },
 
+  // ---------- map fakes ----------
+
+  /** Lantern sputter: mains-ish buzz that stutters in and out, with crackles and a low fwump. */
+  flicker: (s, o, r) => {
+    const t = s.t;
+    const dur = 1.5;
+    const g = s.gain(0, o);
+    const lp = s.filter('lowpass', 900 * r, 1.2, g);
+    s.osc('sawtooth', 60 * r, t, t + dur, lp);
+    s.osc('square', 120 * r, t, t + dur, s.gain(0.3, lp));
+    // stutter gate: on/off steps, a long drop-out in the middle (matches the visual)
+    let tt = t;
+    g.gain.setValueAtTime(0.0001, t);
+    while (tt < t + dur) {
+      const mid = tt - t > 0.45 && tt - t < 0.85;
+      const on = !mid && Math.random() < 0.6;
+      g.gain.setValueAtTime(on ? rnd(0.18, 0.3) : 0.0001, tt);
+      tt += rnd(0.03, 0.09);
+    }
+    g.gain.setValueAtTime(0.0001, t + dur);
+    for (let i = 0; i < 9; i++) burst(s, o, { t: t + rnd(0, dur), d: rnd(0.01, 0.03), g: rnd(0.2, 0.45), type: 'highpass', f: rnd(2500, 5000) * r });
+    burst(s, o, { t: t + 0.45, d: 0.25, g: 0.35, type: 'lowpass', f: 260 * r, f2: 90, q: 0.8 });
+  },
+
+  /** Steam train whistle: a breathy three-note chime chord that swells, holds and dies. */
+  whistle: (s, o, r) => {
+    const t = s.t;
+    const hold = 1.15;
+    const env = s.gain(0, o);
+    ahr(env.gain, t, 0.5, 0.12, hold, 0.4, 0.85);
+    const bp = s.filter('bandpass', 1100 * r, 0.9, env);
+    for (const [f, g] of [[392, 0.5], [494, 0.42], [587, 0.36], [784, 0.12]] as const) {
+      const osc = s.osc('sawtooth', f * r * 0.97, t, t + hold + 0.6, s.gain(g, bp));
+      // pitch rises as the steam pressure builds
+      sweep(osc.frequency, t, f * r * 0.97, f * r, 0.18);
+      const vib = s.osc('sine', 5.5, t, t + hold + 0.6);
+      vib.connect(s.gain(f * r * 0.004, osc.frequency));
+    }
+    // steam hiss through it and a puff at the start
+    const hiss = s.gain(0, o);
+    ahr(hiss.gain, t, 0.22, 0.05, hold, 0.5, 0.6);
+    s.noise(t, t + hold + 0.6, s.filter('bandpass', 3200 * r, 0.7, hiss));
+    burst(s, o, { t, d: 0.2, g: 0.3, type: 'highpass', f: 1800 });
+  },
+
+  /** Hawk screech: a raspy "keee-arr" falling from high to mid with fast vibrato. */
+  hawk: (s, o, r) => {
+    const t = s.t;
+    const dur = 0.95;
+    const bank = formantBank(s, o, [[2600 * r, 5, 1.4], [3800 * r, 7, 0.8], [1700 * r, 4, 0.5]]);
+    const g = s.gain(0, bank);
+    ahr(g.gain, t, 0.9, 0.04, dur * 0.55, dur * 0.4, 0.8);
+    const osc = s.osc('sawtooth', 3100 * r, t, t + dur + 0.05, g);
+    osc.frequency.setValueAtTime(2700 * r, t);
+    osc.frequency.linearRampToValueAtTime(3200 * r, t + 0.12);
+    osc.frequency.exponentialRampToValueAtTime(1900 * r, t + dur);
+    const vib = s.osc('triangle', 34, t, t + dur + 0.05);
+    vib.connect(s.gain(140 * r, osc.frequency));
+    const rasp = s.osc('square', 210, t, t + dur + 0.05);
+    rasp.connect(s.gain(0.25, g.gain));
+    burst(s, bank, { t, a: 0.03, d: dur * 0.8, g: 0.3, type: 'bandpass', f: 3000 * r, q: 2 });
+  },
+
+  /** Glass breaking: a sharp crack, then a spray of bright tinkles and a few bouncing shards. */
+  glass: (s, o, r) => {
+    const t = s.t;
+    burst(s, o, { t, d: 0.06, g: 0.9, type: 'highpass', f: 3000 * r });
+    burst(s, o, { t, d: 0.18, g: 0.4, type: 'bandpass', f: 5200 * r, q: 1.5 });
+    tone(s, o, { f: 180 * r, f2: 90, t, d: 0.08, g: 0.3 });
+    for (let i = 0; i < 26; i++) {
+      const tt = t + Math.pow(Math.random(), 1.6) * 0.55;
+      const f = rnd(2400, 9000) * r;
+      tone(s, o, { f, t: tt, d: rnd(0.04, 0.18), g: rnd(0.04, 0.12) });
+    }
+    // shards hitting the floor
+    for (const dt of [0.32, 0.47, 0.6, 0.71]) {
+      const tt = t + dt + rnd(0, 0.04);
+      burst(s, o, { t: tt, d: 0.015, g: 0.25, type: 'highpass', f: 4000 });
+      tone(s, o, { f: rnd(3000, 6000) * r, t: tt, d: 0.07, g: 0.06 });
+    }
+  },
+
   crow: (s, o, r) => {
     const n = Math.random() < 0.5 ? 2 : 3;
     const bank = formantBank(s, o, [[1300 * r, 4, 1.6], [2600 * r, 6, 1], [700 * r, 3, 0.6]]);
@@ -468,6 +550,7 @@ const recipes: Record<SfxName, Recipe> = {
 const REV: Partial<Record<SfxName, number>> = {
   bellToll: 0.7, gunshot: 0.45, shotgun: 0.5, choir: 0.8, perfect: 0.3, heal: 0.4, crow: 0.25,
   door: 0.2, fall: 0.2, lanternWhoosh: 0.3, fuego: 0.3, glassClink: 0.2, boo: 0.3, cheer: 0.25, blind: 0.3, vaporize: 0.3,
+  flicker: 0.1, whistle: 0.45, hawk: 0.35, glass: 0.25,
   countGo: 0.25, holdRise: 0.15, steadyHum: 0.15, tapTick: 0.03, mashClick: 0.03, wheelTick: 0.02,
 };
 
@@ -475,6 +558,7 @@ const REV: Partial<Record<SfxName, number>> = {
 const LEVEL: Partial<Record<SfxName, number>> = {
   bellToll: 1, gunshot: 0.9, shotgun: 0.9, uiMove: 0.6, spurs: 0.8, boo: 0.9, cheer: 0.8, choir: 0.7,
   wheelTick: 0.5, mashClick: 0.8, steadyHum: 0.9, countTick: 0.85, countGo: 0.9,
+  flicker: 0.8, whistle: 0.75, hawk: 0.7, glass: 0.85,
 };
 
 let crunch: Float32Array<ArrayBuffer> | null = null;

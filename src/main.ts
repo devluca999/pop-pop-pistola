@@ -40,17 +40,21 @@ function applySettings() {
 }
 
 function layout() {
-  fitCanvas(canvas);
-  const r = canvas.getBoundingClientRect();
+  fitCanvas(canvas); // no-op: the Stage sizes the canvas to fill #app
+  // #ui and #crt cover the visible game image only (not the dithered bars)
+  const v = stage.view;
+  const r = v.image;
   for (const el of [ui, crt]) {
-    el.style.left = `${r.left}px`;
-    el.style.top = `${r.top}px`;
-    el.style.width = `${r.width}px`;
-    el.style.height = `${r.height}px`;
+    el.style.left = `${r.x}px`;
+    el.style.top = `${r.y}px`;
+    el.style.width = `${r.w}px`;
+    el.style.height = `${r.h}px`;
   }
-  document.documentElement.style.setProperty('--u', `${r.width / 320}px`);
+  // HUD unit follows the smaller dimension so 21:9 does not blow the HUD up
+  document.documentElement.style.setProperty('--u', `${v.u}px`);
 }
-window.addEventListener('resize', layout);
+// runs inside the Stage's ResizeObserver callback, same frame as the canvas resize
+stage.onResize(layout);
 
 // ------------------------------------------------------------------ screen flow
 

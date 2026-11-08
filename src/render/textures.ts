@@ -173,42 +173,90 @@ export function street(base: number): THREE.CanvasTexture {
   });
 }
 
+/** Screen-space sky: a gradient that thickens toward the top corners, an optional disc and stars. */
+export interface SkySpec {
+  key: string;
+  /** [position 0..1, colour]: 0 = horizon band, 1 = top corners. */
+  stops: [number, number][];
+  /** Fraction of the height where the gradient bottoms out (horizon band). */
+  horizon: number;
+  /** How much the top corners darken beyond the centre. */
+  corner: number;
+  /** Sun or moon. x is an offset from the centre, in sky pixels (sky is 108 px tall). */
+  disc?: { x: number; y: number; r: number; color: number; rim: number; halo: number; haloAmt: number };
+  /** Number of single-pixel stars (night skies). */
+  stars?: number;
+  starColor?: number;
+}
+
 /**
- * Screen-space sky backdrop (refs/map.png): mostly cream/off-white, with dusty blue that thickens
- * toward the top corners (the post pass turns the in-between tones into a blue stipple). A clean,
- * round pale-cream sun sits above and slightly left of the church cross, with a soft halo.
+ * High-noon sky (refs/map.png): mostly cream/off-white, with dusty blue that thickens toward the
+ * top corners (the post pass turns the in-between tones into a blue stipple). A clean, round
+ * pale-cream sun sits above and slightly left of the church cross, with a soft halo.
  */
-export function skyBackdrop(): THREE.CanvasTexture {
-  return make('sky3', 192, 108, (g) => {
-    const img = g.createImageData(192, 108);
-    const cream = [0xed, 0xeb, 0xe7];
-    const grey = [0xc4, 0xc9, 0xcf];
-    const blue = [0x97, 0xa6, 0xb6];
-    const deep = [0x69, 0x81, 0x9d];
-    const sunX = 80;
-    const sunY = 11;
-    const sunR = 8;
-    const mix = (a: number[], b: number[], t: number) => a.map((v, k) => v + (b[k] - v) * t);
-    for (let y = 0; y < 108; y++) {
-      for (let x = 0; x < 192; x++) {
-        // 0 at the horizon band (~60% down) .. 1 at the top corners
-        const up = Math.max(0, 1 - y / 66);
-        const corner = Math.abs(x - 96) / 96;
-        const b = Math.min(1, up * (0.72 + 0.55 * corner));
-        let c = b < 0.35 ? mix(cream, grey, b / 0.35) : b < 0.7 ? mix(grey, blue, (b - 0.35) / 0.35) : mix(blue, deep, (b - 0.7) / 0.3);
-        // sun halo: fades the sky back to warm cream around the disc
-        const d = Math.hypot(x - sunX, (y - sunY) * 1.05);
-        if (d < sunR * 3.2) {
-          const h = 1 - (d - sunR) / (sunR * 2.2);
-          if (h > 0) c = mix(c, [0xd8, 0xda, 0xd8], Math.min(0.85, h * 1.1));
+export const NOON_SKY: SkySpec = {
+  key: 'noon',
+  stops: [[0, 0xedebe7], [0.35, 0xc4c9cf], [0.7, 0x97a6b6], [1, 0x69819d]],
+  horizon: 66 / 108,
+  corner: 0.55,
+  disc: { x: -16, y: 11, r: 8, color: 0xf6eede, rim: 0xf3e4c8, halo: 0xd8dad8, haloAmt: 0.85 },
+};
+
+const rgbOf = (h: number): number[] => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+
+/** Sky backdrop texture `w` pixels wide (108 tall), so it is never stretched at any aspect. */
+export function skyBackdrop(spec: SkySpec = NOON_SKY, w = 192): THREE.CanvasTexture {
+  const H = 108;
+  w = Math.max(16, Math.round(w));
+  return make(`sky:${spec.key}:${w}`, w, H, (g, r) => {
+    const img = g.createImageData(w, H);
+    const stops = spec.stops.map(([p, c]) => [p, rgbOf(c)] as const);
+    const mix = (a: readonly number[], b: readonly number[], t: number) => a.map((v, k) => v + (b[k] - v) * t);
+    const grad = (b: number): number[] => {
+      for (let i = 1; i < stops.length; i++) {
+        if (b <= stops[i][0]) {
+          const [p0, c0] = stops[i - 1];
+          const [p1, c1] = stops[i];
+          return mix(c0, c1, (b - p0) / Math.max(1e-6, p1 - p0));
         }
-        if (d <= sunR) c = [0xf6, 0xee, 0xde];
-        if (d <= sunR && d > sunR - 1.2) c = [0xf3, 0xe4, 0xc8]; // crisp rim
-        const o = (y * 192 + x) * 4;
+      }
+      return [...stops[stops.length - 1][1]];
+    };
+    const d0 = spec.disc;
+    const sunX = w / 2 + (d0?.x ?? 0);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < w; x++) {
+        const up = Math.max(0, 1 - y / (H * spec.horizon));
+        const corner = Math.abs(x - w / 2) / (w / 2);
+        const b = Math.min(1, up * (1 - spec.corner + 0.27 + spec.corner * corner));
+        let c = grad(b);
+        if (d0) {
+          // halo fades the sky toward the halo colour around the disc
+          const d = Math.hypot(x - sunX, (y - d0.y) * 1.05);
+          if (d < d0.r * 3.2) {
+            const h = 1 - (d - d0.r) / (d0.r * 2.2);
+            if (h > 0) c = mix(c, rgbOf(d0.halo), Math.min(d0.haloAmt, h * 1.1));
+          }
+          if (d <= d0.r) c = rgbOf(d0.color);
+          if (d <= d0.r && d > d0.r - 1.2) c = rgbOf(d0.rim);
+        }
+        const o = (y * w + x) * 4;
         img.data[o] = c[0];
         img.data[o + 1] = c[1];
         img.data[o + 2] = c[2];
         img.data[o + 3] = 255;
+      }
+    }
+    if (spec.stars) {
+      const sc = rgbOf(spec.starColor ?? 0xedebe7);
+      for (let i = 0; i < spec.stars * (w / 192); i++) {
+        const x = Math.floor(r() * w);
+        const y = Math.floor(Math.pow(r(), 1.6) * H * spec.horizon);
+        if (d0 && Math.hypot(x - sunX, y - d0.y) < d0.r * 2.5) continue;
+        const o = (y * w + x) * 4;
+        img.data[o] = sc[0];
+        img.data[o + 1] = sc[1];
+        img.data[o + 2] = sc[2];
       }
     }
     g.putImageData(img, 0, 0);

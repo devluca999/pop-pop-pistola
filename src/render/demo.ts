@@ -1,20 +1,19 @@
 // Standalone preview of the Stage. Keys: 1-0 poses (far), shift+digit poses (near), Q-P fx, F filter, C chars, etc.
-import { Stage, fitCanvas } from './index';
-import type { CharacterId, Pose, FxKind, FakeKind, FilterMode, ScreenSide } from '../types';
+import { Stage, MAPS } from './index';
+import type { CharacterId, Pose, FxKind, FakeKind, FilterMode, MapId, ScreenSide } from '../types';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
 const stage = new Stage(canvas);
-fitCanvas(canvas);
-addEventListener('resize', () => fitCanvas(canvas));
 
 const chars: CharacterId[] = ['hector', 'dusty', 'mercy'];
 const poses: Pose[] = ['idle', 'ready', 'draw', 'fire', 'hit', 'dead', 'heal', 'win', 'blinded', 'jam'];
 const fxs: FxKind[] = ['muzzle', 'shotgunBlast', 'smokePuff', 'dust', 'hatFly', 'lanternFlash', 'cigarSmoke', 'whiskey', 'vaporize', 'heal', 'sparks'];
-const fakes: FakeKind[] = ['crow', 'tumbleweed', 'door', 'cough'];
+let mi = 0;
+let fakes: FakeKind[] = MAPS[0].fakes;
 const filters: FilterMode[] = ['color', 'noir', 'onebit', 'sepia'];
 let ci = 0, cj = 1, fi = 0, push = 0, side: ScreenSide = 'far', fxi = 0, fki = 0, charge = 0, drunk = false, cloud = false, title = false;
-const state = () => (hud.textContent = `near=${chars[ci]} far=${chars[cj]} side=${side} filter=${filters[fi]} push=${push}\n0-9 pose | x fx(${fxs[fxi]}) z next fx | v fake(${fakes[fki]}) | b bell | f filter | c/n chars | s side | p push | h halo | d drunk | k cloud | m slowmo | t title | w wash | g flash`);
+const state = () => (hud.textContent = `near=${chars[ci]} far=${chars[cj]} side=${side} filter=${filters[fi]} push=${push} map=${MAPS[mi].id}\n0-9 pose | x fx(${fxs[fxi]}) z next fx | v fake(${fakes[fki]}) | b bell | f filter | c/n chars | s side | p push | h halo | d drunk | k cloud | m slowmo | l map | t title | w wash | g flash`);
 state();
 
 const q = new URLSearchParams(location.search);
@@ -26,6 +25,10 @@ if (q.get('pose')) { stage.setPose('far', q.get('pose') as Pose); stage.setPose(
 if (q.get('title')) stage.setMode('title');
 if (q.get('halo')) stage.setHalo('far', Number(q.get('halo')));
 if (q.get('cloud')) stage.setSmokeCloud(true);
+const setMap = (i: number) => { mi = i; stage.setMap(MAPS[mi].id); fakes = MAPS[mi].fakes; fki = 0; };
+if (q.get('map')) setMap(Math.max(0, MAPS.findIndex((m) => m.id === (q.get('map') as MapId))));
+if (q.get('fake')) setTimeout(() => stage.fake(q.get('fake') as FakeKind), Number(q.get('fakeAt') ?? 600));
+state();
 
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
@@ -43,6 +46,7 @@ addEventListener('keydown', (e) => {
   if (k === 'd') { drunk = !drunk; stage.setDrunk(side, drunk); }
   if (k === 'k') { cloud = !cloud; stage.setSmokeCloud(cloud); }
   if (k === 'm') { stage.punch(); stage.slowmo(0.2, 1500); }
+  if (k === 'l') setMap((mi + 1) % MAPS.length);
   if (k === 't') { title = !title; stage.setMode(title ? 'title' : 'duel'); }
   if (k === 'w') { stage.setPost({ washLeft: 0.9 }); setTimeout(() => stage.setPost({ washLeft: 0 }), 900); }
   if (k === 'g') { stage.setPost({ flash: 1 }); setTimeout(() => stage.setPost({ flash: 0 }), 80); }
