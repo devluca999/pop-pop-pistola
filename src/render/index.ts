@@ -18,9 +18,11 @@ const OUTPUT_MAX_W = 2560;
 
 const NEAR_Z = 3.0;
 const FAR_Z = -2.5;
-const CAM_POS = new THREE.Vector3(1.5, 2.7, 8.6);
-const CAM_LOOK = new THREE.Vector3(-0.3, 1.45, -2.5);
-const BASE_FOV = 32;
+/** World z of the bell tower (church at z -44, tower at local z +1.2; see town.ts). */
+const TOWER_Z = -42.8;
+/** How far behind the near duelist the camera sits. */
+const CAM_BACK = 2.1;
+const BASE_FOV = 34;
 
 interface Duelist {
   rig: Rig;
@@ -47,6 +49,9 @@ export class Stage {
   private cloudAmt = 0;
   private cloudOn = false;
   private push = 0;
+  /** Over-the-shoulder framing, recomputed per matchup in frameShot(). */
+  private camPos = new THREE.Vector3(0.95, 1.8, NEAR_Z + CAM_BACK);
+  private camLook = new THREE.Vector3(0, 1.8, FAR_Z);
   private pushCur = 0;
   private punchAmt = 0;
   private shakeAmt = 0;
@@ -164,6 +169,7 @@ export class Stage {
     };
     this.duelists.near = mk(near, 'near');
     this.duelists.far = mk(far, 'far');
+    this.frameShot();
     this.particles.clear();
     this.setSmokeCloud(false);
     this.cloudAmt = 0;
@@ -342,6 +348,43 @@ export class Stage {
     return { x: (p.x + 1) / 2, y: (1 - p.y) / 2 };
   }
 
+  /**
+   * Tight over-the-shoulder shot (refs/map.png, bottom panel): camera at the near duelist's
+   * shoulder height, behind and to their right, so they fill the left third and are cropped
+   * by the frame edge. The far duelist is nudged sideways so the line from the camera through
+   * their head lands on the bell tower: the tower always sits directly behind their head.
+   */
+  private frameShot(): void {
+    const near = this.duelists.near;
+    const far = this.duelists.far;
+    if (!near || !far) return;
+    near.rig.root.updateMatrixWorld(true);
+    far.rig.root.updateMatrixWorld(true);
+    // Body width without the hat (Hector's hat is 3x his shoulders and would skew it).
+    const hat = near.rig.hat;
+    const hatParent = hat.parent;
+    hatParent?.remove(hat);
+    const box = new THREE.Box3().setFromObject(near.rig.root);
+    hatParent?.add(hat);
+    const halfW = Math.max(Math.abs(box.min.x), Math.abs(box.max.x));
+    const nearHead = near.rig.head.getWorldPosition(new THREE.Vector3());
+    // Tuned on Hector (half-width 0.36); wider duelists (Dusty 0.53) shift right and back.
+    const extra = Math.max(0, halfW - 0.36);
+    const camX = 0.55 + extra * 1.6;
+    const camY = Math.max(1.0, nearHead.y - 0.22); // shoulder height
+    // Wider duelists get a little more room so they never hide the opponent.
+    const camZ = NEAR_Z + CAM_BACK + extra * 3;
+    // camera -> far head ray must hit x = 0 at the tower
+    const farX = camX * (1 - (camZ - FAR_Z) / (camZ - TOWER_Z));
+    far.rig.root.position.x = farX;
+    far.rig.root.rotation.y = Math.atan2(camX - farX, camZ - FAR_Z); // face the camera head-on
+    far.forward.set(Math.sin(far.rig.root.rotation.y), 0, Math.cos(far.rig.root.rotation.y));
+    far.rig.root.updateMatrixWorld(true);
+    const farHead = far.rig.head.getWorldPosition(new THREE.Vector3());
+    this.camPos.set(camX, camY, camZ);
+    this.camLook.set(farX, farHead.y + 0.25, FAR_Z);
+  }
+
   private updateCamera(dt: number): void {
     const cam = this.camera;
     const reduced = this.opts.reducedMotion;
@@ -357,9 +400,9 @@ export class Stage {
     this.pushCur += (this.push - this.pushCur) * (1 - Math.exp(-6 * dt));
     this.punchAmt = Math.max(0, this.punchAmt - dt * 2.2);
     this.shakeAmt = Math.max(0, this.shakeAmt - dt * 2.5);
-    const pushK = this.pushCur * (reduced ? 0.03 : 0.055);
-    cam.position.copy(CAM_POS).lerp(CAM_LOOK, pushK);
-    const look = CAM_LOOK.clone();
+    // Push-ins zoom rather than dolly, so the near duelist never leaves the frame.
+    cam.position.copy(this.camPos);
+    const look = this.camLook.clone();
     if (this.shakeAmt > 0) {
       const s = this.shakeAmt * this.shakeAmt * 0.25;
       cam.position.x += rand(-s, s);
@@ -368,7 +411,7 @@ export class Stage {
     }
     cam.lookAt(look);
     const pk = this.punchAmt * this.punchAmt;
-    cam.fov = BASE_FOV - (reduced ? 2 : 7) * pk;
+    cam.fov = BASE_FOV - this.pushCur * (reduced ? 0.8 : 1.6) - (reduced ? 2 : 6) * pk;
     cam.updateProjectionMatrix();
   }
 
