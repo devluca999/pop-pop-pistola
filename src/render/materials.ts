@@ -94,7 +94,8 @@ export function basic(hex: number): THREE.MeshBasicMaterial {
   return m;
 }
 
-const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+export const sharedBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+const boxGeo = sharedBoxGeo;
 
 /** Unit box scaled; position is the box centre. */
 export function box(

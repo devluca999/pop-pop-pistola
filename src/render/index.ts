@@ -1,16 +1,18 @@
 import * as THREE from 'three';
-import type { CharacterId, Pose, FxKind, FakeKind, ScreenSide, PostSettings, ViewOptions } from '../types';
+import type { CharacterId, Pose, FxKind, FakeKind, MapId, ScreenSide, PostSettings, ViewOptions } from '../types';
 import { buildCharacter, type Rig } from './characters';
 import { Puppet } from './puppet';
-import { Town, TOWER_Z } from './town';
+import { World } from './world';
+import { mapDef } from './maps';
 import { Particles, rand, randDir } from './fx';
 import { PostPass } from './post';
 import { C } from './materials';
-import { skyBackdrop, NOON_SKY } from './textures';
+import { skyBackdrop } from './textures';
 import { computeView, RES_H, type StageView, type Insets } from './view';
 
 export { computeView, RES_H, ASPECT_MIN, ASPECT_MAX } from './view';
 export type { StageView } from './view';
+export { MAPS, type MapInfo } from './maps';
 
 /** Reference internal width (16:9). The live width follows the screen: see StageView.resW. */
 export const RES_W = 384;
@@ -56,10 +58,10 @@ export class Stage {
   /** FOV chosen by frameShot (base for push-ins). */
   private shotFov = BASE_FOV;
   private skyW = 0;
-  private town = new Town();
+  private scenery!: World;
+  private mapId: MapId = 'noon';
   private particles = new Particles();
   private duelists: Record<ScreenSide, Duelist | null> = { near: null, far: null };
-  private sun: THREE.DirectionalLight;
   private flashLight = new THREE.PointLight(0xffc070, 0, 7, 1.5);
   private flashLightT = 0;
   private beam: THREE.Mesh;
@@ -80,7 +82,6 @@ export class Stage {
   private time = 0;
   private opts: ViewOptions = { shake: true, reducedMotion: false, reduceFlashing: false };
   private tmp = new THREE.Vector3();
-  private coughCooldown = 0;
   private nearTurn = NEAR_TURN;
 
   /**
@@ -97,32 +98,8 @@ export class Stage {
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
     Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', imageRendering: 'pixelated' });
 
-    this.scene.fog = new THREE.Fog(0xe6e2da, 90, 330);
-
-    // low, cool ambient: shadows read blue-grey against the warm sunlit dirt
-    const hemi = new THREE.HemisphereLight(0xc4c9cf, 0x6a4c34, 1.05);
-    this.scene.add(hemi);
-    // strong warm high-noon key, almost overhead: short, hard shadows under everything
-    this.sun = new THREE.DirectionalLight(0xfff0dc, 3.5);
-    this.sun.position.set(0.6, 14, 7.0);
-    this.sun.target.position.set(0, 0, -4);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const sc = this.sun.shadow.camera;
-    sc.left = -16; sc.right = 16; sc.top = 22; sc.bottom = -26; sc.near = 1; sc.far = 50;
-    this.sun.shadow.bias = -0.0006;
-    this.sun.shadow.normalBias = 0.03;
-    this.scene.add(this.sun, this.sun.target);
-    // warm bounce off the bright street: lights both rows of facades (they face across the street)
-    for (const sx of [-1, 1]) {
-      const fill = new THREE.DirectionalLight(0xf8c08f, 1.25);
-      fill.position.set(sx * 10, 3, 4);
-      fill.target.position.set(0, 2, -6);
-      this.scene.add(fill, fill.target);
-    }
     this.scene.add(this.flashLight);
 
-    this.scene.add(this.town.group);
     this.scene.add(this.particles.group);
 
     // lantern beam (cone), hidden until fired
@@ -152,6 +129,7 @@ export class Stage {
 
     // measure now so the very first frame is already the right size
     this.applyView(this.measure());
+    this.buildMap('noon');
     this.setDuelists('hector', 'dusty');
     this.updateCamera(0);
     this.observe();
@@ -202,11 +180,45 @@ export class Stage {
     }
   }
 
-  private refreshSky(): void {
+  private refreshSky(force = false): void {
+    if (!this.scenery) return;
+    const sky = this.scenery.def.light.sky;
+    if (typeof sky === 'number') {
+      this.scene.background = new THREE.Color(sky);
+      return;
+    }
     const w = Math.round(108 * (this.viewNow.resW / this.viewNow.resH));
-    if (w === this.skyW) return;
+    if (w === this.skyW && !force) return;
     this.skyW = w;
-    this.scene.background = skyBackdrop(NOON_SKY, w);
+    this.scene.background = skyBackdrop(sky, w);
+  }
+
+  // ------------------------------------------------------------ maps
+  /** Current map. */
+  get map(): MapId {
+    return this.mapId;
+  }
+
+  /** Swap the whole set: props, lights, palette, sky and fog. Duelists stay. */
+  setMap(id: MapId): void {
+    if (id === this.mapId && this.scenery) return;
+    this.buildMap(id);
+    this.particles.clear();
+    this.frameShot();
+  }
+
+  private buildMap(id: MapId): void {
+    if (this.scenery) {
+      this.scene.remove(this.scenery.group);
+      this.scenery.dispose();
+    }
+    const def = mapDef(id);
+    this.mapId = def.id;
+    this.scenery = new World(def, this.particles);
+    this.scene.add(this.scenery.group);
+    this.scenery.applyTo(this.scene);
+    this.post.setPalette(def.palette);
+    this.refreshSky(true);
   }
 
   /** Re-measure now and redraw at once, so a resize never shows a stretched or blank frame. */
@@ -392,12 +404,13 @@ export class Stage {
     this.flashLightT = dur;
   }
 
+  /** Show a fake signal. Kinds the current map has no visual for are ignored. */
   fake(kind: FakeKind): void {
-    this.town.fake(kind);
+    this.scenery.fake(kind);
   }
 
   ringBell(): void {
-    this.town.ringBell();
+    this.scenery.ringBell();
   }
 
   setSmokeCloud(on: boolean): void {
@@ -480,8 +493,8 @@ export class Stage {
     const hatCorners = cornersOf(hatBox);
     const camY = Math.max(1.0, nearHead.y * 0.8); // below the brim: we look past the shoulder
     const camZ = NEAR_Z + CAM_BACK;
-    const towerZ = TOWER_Z;
-    const bellTop = this.town.bell.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.3, 0));
+    const towerZ = this.scenery.def.camera.bellZ;
+    const bellTop = this.scenery.bell.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.3, 0));
     const cam = this.camera;
     cam.aspect = this.viewNow.resW / this.viewNow.resH;
     const ndc = (v: THREE.Vector3): THREE.Vector3 => v.clone().project(cam);
@@ -551,7 +564,7 @@ export class Stage {
     const nh = xs(hatBox);
     const head = this.world(far.rig.head).add(new THREE.Vector3(0, 0.45, 0)).project(cam);
     const feet = far.rig.root.position.clone().project(cam);
-    const bell = this.town.bell.getWorldPosition(new THREE.Vector3()).project(cam);
+    const bell = this.scenery.bell.getWorldPosition(new THREE.Vector3()).project(cam);
     const r = {
       aspect: cam.aspect, fov: cam.fov,
       nearBodyMaxX: nb.mx, nearHatMaxX: nh.mx, nearVisible: nb.mx > -0.98,
@@ -566,11 +579,11 @@ export class Stage {
     const cam = this.camera;
     const reduced = this.opts.reducedMotion;
     if (this.mode === 'title') {
+      const T = this.scenery.def.camera.title;
       const a = Math.sin(this.time * 0.12) * 0.5;
-      const r = 12;
-      cam.position.set(Math.sin(a) * r * 0.6 + 1.5, 3.6 + Math.sin(this.time * 0.2) * 0.4, Math.cos(a) * r - 1);
-      cam.lookAt(0, 3.2, -14);
-      cam.fov = 42 * (this.baseFov / BASE_FOV);
+      cam.position.set(Math.sin(a) * T.r * 0.6 + T.cx, T.y + Math.sin(this.time * 0.2) * 0.4, Math.cos(a) * T.r + T.cz);
+      cam.lookAt(T.look[0], T.look[1], T.look[2]);
+      cam.fov = T.fov * (this.baseFov / BASE_FOV);
       cam.updateProjectionMatrix();
       return;
     }
@@ -618,12 +631,7 @@ export class Stage {
       }
     }
 
-    const { coughPuff } = this.town.update(adt);
-    this.coughCooldown -= adt;
-    if (coughPuff && this.coughCooldown <= 0) {
-      this.coughCooldown = 0.18;
-      this.particles.spawn({ pos: this.town.coughPuffAt.clone(), vel: new THREE.Vector3(rand(-1.2, -0.6), rand(0, 0.4), rand(-0.3, 0.3)), color: C.smoke, size: 0.14, life: 0.8, grow: 2, drag: 2, shape: 'puff' });
-    }
+    this.scenery.update(adt);
     this.particles.update(adt);
 
     // muzzle light

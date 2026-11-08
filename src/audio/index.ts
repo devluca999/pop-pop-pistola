@@ -1,7 +1,7 @@
 // POP.POP.Pistola audio: everything is synthesized with the Web Audio API.
 // Every public method is a safe no-op before unlock() and never throws.
-import type { CharacterId } from '../types';
-import { setHeartbeat, setWind } from './ambience';
+import type { CharacterId, MapId } from '../types';
+import { setAmbienceBed, setHeartbeat, setWind } from './ambience';
 import { duck as duckBuses, engine, ensureEngine, setVolumes as setBusVolumes } from './context';
 import { loadCustomMusic, playMusic } from './music';
 import { playDrumroll, playSfx } from './sfx';
@@ -82,6 +82,10 @@ export const audio: AudioEngine = {
       const e = running();
       if (e && started) setWind(e, on);
     });
+  },
+
+  setAmbience(id: MapId) {
+    safe(() => setAmbienceBed(running(), id));
   },
 
   heartbeat(on: boolean, bpm?: number) {

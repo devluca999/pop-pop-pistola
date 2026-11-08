@@ -45,3 +45,17 @@ Headless Chromium (Playwright, SwiftShader GL) against `render-demo.html` and `i
 - The view is measured synchronously in the Stage constructor, so the first frame is already the right size. A ResizeObserver on `#app` and the canvas resizes the target, post pass and camera, and redraws inside the same callback.
 - Headless quirk: Chromium headless reports `devicePixelContentBoxSize` in CSS px under DPR emulation, so the Stage falls back to css x devicePixelRatio when the two disagree.
 - Unit tests: `src/render/view.test.ts`.
+
+## Maps (render pass)
+
+Maps are data in `src/render/maps/` (one file per map, built from reusable prop builders in `props.ts`), assembled by `src/render/world.ts`. `town.ts` is gone; noon is a straight port of it and renders the same as before.
+
+| Map | Bell behind the rival | Fake (visual / sound) | Ambience |
+|---|---|---|---|
+| noon: High Noon Main Street | church tower | crow, tumbleweed, door, cough (unchanged) | wind |
+| midnight: Midnight Lantern Street | timber fire-bell trestle with its own small lamp | flicker: every lantern sputters and nearly dies for 1.5 s / mains buzz that stutters, crackles | crickets, far owl, light wind |
+| train: Train Platform | depot cupola | whistle: steam jet blows in from off the right edge / three-note chime whistle + hiss | yard hiss, clanks; a train rolls through every ~45 s (first at 14 s), ambient only |
+| mesa: Mesa at Sunset | adobe mission bell gable | hawk: silhouette swoops across above the rival, shadow sweeps the sand / falling raspy screech | strong desert wind, rare coyote |
+| saloon: Saloon Interior | bell hung over the bar | glass: bottle on the bar shatters into shards / crack + tinkle spray | crowd murmur, honky-tonk piano, glass clinks |
+
+Checked headless at 1920x1080 (each map, plus each fake mid-effect), and the framing check at 1024x768, 2560x1080 and 390x844@3 for every map: all ok (near body right edge -0.31 to -0.39 NDC, rival centred, bell above the rival's head, NDC y 0.61 to 0.84). Same dither pass and palette count (20 colours: 8 shared character colours + 12 per map). Saloon title orbit stays inside the room. The four new sounds and the five ambience beds ran in headless Chromium without errors, but nobody has listened to them yet.

@@ -1,4 +1,4 @@
-import type { CharacterId } from '../types';
+import type { CharacterId, MapId } from '../types';
 
 export type SfxName =
   | 'bellToll' | 'gunshot' | 'shotgun' | 'click' | 'jam' | 'crow' | 'tumbleweed' | 'door' | 'cough'
@@ -6,7 +6,9 @@ export type SfxName =
   | 'hit' | 'fall' | 'hatFly' | 'promptGood' | 'promptBad' | 'flinch' | 'perfect' | 'uiMove'
   | 'uiSelect' | 'uiBack' | 'pop' | 'fuego' | 'feint' | 'blind' | 'vaporize' | 'heal'
   | 'tapTick' | 'holdRise' | 'mashClick' | 'timeTick' | 'wheelTick' | 'releasePop' | 'orderBlip'
-  | 'steadyHum' | 'countTick' | 'countGo';
+  | 'steadyHum' | 'countTick' | 'countGo'
+  // map fakes
+  | 'flicker' | 'whistle' | 'hawk' | 'glass';
 
 export type MusicTrack = 'title' | 'duel' | 'win' | 'lose' | 'none';
 
@@ -24,6 +26,8 @@ export interface AudioEngine {
   voice(ch: CharacterId, mood: VoiceMood, opts?: { pan?: number }): void;
   music(track: MusicTrack): void;
   wind(on: boolean): void;
+  /** Pick the map's ambience bed (wind, crickets, train yard, desert, saloon). Plays while wind(true). */
+  setAmbience(id: MapId): void;
   heartbeat(on: boolean, bpm?: number): void;
   setVolumes(v: Volumes): void;
   duck(amount: number, ms: number): void;
