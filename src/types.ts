@@ -12,7 +12,13 @@ export type FxKind =
   | 'muzzle' | 'shotgunBlast' | 'smokePuff' | 'dust' | 'hatFly' | 'lanternFlash'
   | 'cigarSmoke' | 'whiskey' | 'vaporize' | 'heal' | 'sparks';
 
-export type FakeKind = 'crow' | 'tumbleweed' | 'door' | 'cough';
+export type FakeKind =
+  | 'crow' | 'tumbleweed' | 'door' | 'cough'
+  // map-specific fakes
+  | 'flicker' | 'whistle' | 'hawk' | 'glass';
+
+/** Duel locations. Each map is data: props, palette, lighting and its own fake signal. */
+export type MapId = 'noon' | 'midnight' | 'train' | 'mesa' | 'saloon';
 
 export type FilterMode = 'color' | 'noir' | 'onebit' | 'sepia';
 

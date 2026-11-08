@@ -28,6 +28,11 @@ function echo(s: Scope, out: AudioNode, t: number, g: number, d: number): void {
 }
 
 const recipes: Record<SfxName, Recipe> = {
+  // map fakes: placeholders until the map pass gives them their own sounds
+  flicker: (s, o, r) => recipes.door(s, o, r),
+  whistle: (s, o, r) => recipes.crow(s, o, r),
+  hawk: (s, o, r) => recipes.crow(s, o, r),
+  glass: (s, o, r) => recipes.glassClink(s, o, r),
   bellToll: (s, o, r) => {
     const t = s.t;
     const base = 196 * r;

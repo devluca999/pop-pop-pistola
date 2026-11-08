@@ -647,7 +647,7 @@ export class Duel {
         stage.setPose(this.side(i), 'draw');
         audio.sfx('click', { pan: this.pan(i) });
         audio.sfx('boo');
-        const what = o.fake ? { crow: 'IT WAS A CROW!', tumbleweed: 'IT WAS A TUMBLEWEED!', door: 'IT WAS THE SALOON DOOR!', cough: 'SOMEBODY COUGHED!' }[o.fake.kind] : 'NO BELL YET!';
+        const what = o.fake ? { crow: 'IT WAS A CROW!', tumbleweed: 'IT WAS A TUMBLEWEED!', door: 'IT WAS THE SALOON DOOR!', cough: 'SOMEBODY COUGHED!', flicker: 'JUST THE LANTERN!', whistle: 'JUST THE TRAIN!', hawk: 'IT WAS A HAWK!', glass: 'JUST A GLASS!' }[o.fake.kind] : 'NO BELL YET!';
         this.shoutAt('TOO EARLY', 1500);
         this.banner(`${this.tagOf(i)}: ${what}`, 2200, 'small');
         this.after(500, () => { stage.setPose(this.side(i), 'flinch'); audio.voice(this.state.players[i].character, 'hit', { pan: this.pan(i) }); });
