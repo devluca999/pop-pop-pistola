@@ -515,7 +515,7 @@ export class Duel {
 
   // ------------------------------------------------------------ outcome
 
-  private outcome(run: Run, res: ExchangeResult) {
+  private outcome(_run: Run, res: ExchangeResult) {
     if (this.phase !== 'exchange') return;
     this.phase = 'aftermath';
     this.outcomeAt = performance.now();

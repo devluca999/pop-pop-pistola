@@ -44,14 +44,15 @@ export class Input {
       if (e.player !== 0) return;
       e = { ...e, player: this.soloPlayer };
     }
-    for (const f of this.gameL) f(e);
+    for (const f of [...this.gameL]) f(e);
   }
-  private emitMenu(m: MenuInput) { for (const f of this.menuL) f(m); }
+  // Iterate over copies: a listener may open a new screen that subscribes mid-event.
+  private emitMenu(m: MenuInput) { for (const f of [...this.menuL]) f(m); }
 
   private onKey(e: KeyboardEvent, down: boolean) {
     if (this.rawL.length && down) {
       e.preventDefault();
-      for (const f of this.rawL) f(e);
+      for (const f of [...this.rawL]) f(e);
       return;
     }
     if (down && e.repeat) return;
@@ -88,7 +89,7 @@ export class Input {
       for (let bi = 0; bi < now.length; bi++) {
         if (now[bi] === !!prev[bi]) continue;
         const down = now[bi];
-        if (down) for (const f of this.padRawL) f({ pad: gi, button: bi });
+        if (down) for (const f of [...this.padRawL]) f({ pad: gi, button: bi });
         if (this.padRawL.length) continue;
         const slot = b.prompt.indexOf(bi);
         if (slot >= 0) this.emitGame({ player, kind: down ? 'press' : 'release', slot, t, pad: true });

@@ -38,7 +38,7 @@ export function defaultSettings(): Settings {
     pads: structuredClone(DEFAULT_PADS),
     filter: 'color',
     crt: true,
-    dither: 0.7,
+    dither: 1,
     reduceFlashing: false,
     reducedMotion: false,
     shake: true,
@@ -60,6 +60,7 @@ export function loadSettings(): Settings {
       keys: validKeys(s.keys) ?? d.keys,
       pads: validPads(s.pads) ?? d.pads,
       volume: { ...d.volume, ...(s.volume ?? {}) },
+      dither: Math.min(1, Math.max(0.35, Number(s.dither ?? d.dither) || d.dither)),
     };
   } catch {
     return d;
