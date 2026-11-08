@@ -1,5 +1,6 @@
 import type { CharacterId, FilterMode, MapId, PlayerIndex } from '../types';
 import { MAPS } from '../render/maps';
+import { isTouchDevice } from './touch';
 import type { AppCtx } from '../game/ctx';
 import type { MenuInput, GameInput } from '../input';
 import { keyLabel } from '../input/labels';
@@ -54,10 +55,10 @@ export function titleScreen(ctx: AppCtx, next: () => void): ScreenHandle {
   ctx.stage.setMode('title');
   const el = h('div', { class: 'screen' },
     h('div', { class: 'logo' }, shout('POP.POP.', 'slam'), shout('PISTOLA', 'slam'), h('div', { class: 'sub' }, 'A QUICK-DRAW DUEL AT HIGH NOON')),
-    h('div', { class: 'hint', style: 'position:static;margin-top:calc(var(--u)*10)' }, h('span', { class: 'blinker' }, 'PRESS ANY KEY')),
+    h('div', { class: 'hint', style: 'position:static;margin-top:calc(var(--u)*10)' }, h('span', { class: 'blinker' }, isTouchDevice() ? 'TAP TO START' : 'PRESS ANY KEY')),
   );
   let done = false;
-  const go = () => { if (done) return; done = true; ctx.audio.unlock(); ctx.audio.music('title'); ctx.audio.sfx('uiSelect'); next(); };
+  const go = () => { if (done) return; done = true; ctx.onFirstTap?.(); ctx.audio.unlock(); ctx.audio.music('title'); ctx.audio.sfx('uiSelect'); next(); };
   const onKey = () => go();
   window.addEventListener('keydown', onKey);
   el.addEventListener('pointerdown', go);
@@ -68,20 +69,21 @@ export function titleScreen(ctx: AppCtx, next: () => void): ScreenHandle {
 
 // ------------------------------------------------------------------ main menu
 
-export interface MainMenuActions { cpu(): void; local(): void; online(): void; settings(): void; howto(): void }
+export interface MainMenuActions { cpu(): void; local(): void; online(): void; settings(): void; howto(): void; install?(): void }
 
 export function mainMenu(ctx: AppCtx, a: MainMenuActions, start = 0): ScreenHandle {
   ctx.stage.setMode('title');
   ctx.audio.music('title');
   const buttons = [
     btn('VS CPU', a.cpu), btn('LOCAL VERSUS', a.local), btn('ONLINE', a.online), btn('SETTINGS', a.settings), btn('HOW TO PLAY', a.howto),
+    ...(a.install ? [btn('INSTALL APP', a.install)] : []),
   ];
   const el = h('div', { class: 'screen' },
     h('div', { class: 'logo' }, shout('POP.POP.'), shout('PISTOLA')),
     h('div', { class: 'menu' }, ...buttons),
     h('div', { class: 'hint' }, '↑ ↓ + ENTER  ·  ESC BACK  ·  GAMEPADS WORK TOO'),
   );
-  return mount(ctx, el, [navMenu(ctx, buttons, undefined, start)]);
+  return mount(ctx, el, [navMenu(ctx, buttons, undefined, Math.min(start, buttons.length - 1))]);
 }
 
 export function difficultyMenu(ctx: AppCtx, pick: (d: Difficulty) => void, back: () => void): ScreenHandle {
@@ -356,6 +358,19 @@ export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
     <p><b>Gamepad</b>: d-pad or left stick = directions, ${kc('A')} = ACTION, ${kc('RT')} also shoots. X / Y / B double as ← / ↑ / →. START pauses.</p>
     <p><b>Touch</b>: swipe for directions, tap for ACTION. Each prompt shows the gesture.</p>
     <p>Before each mode every player picks KEYBOARD, GAMEPAD or TOUCH; tiles show that device's buttons, and a small legend sits in your corner.</p>
+  ` });
+  const b = btn('BACK', back);
+  const el = h('div', { class: 'screen dim' }, panel, h('div', { class: 'menu' }, b));
+  return mount(ctx, el, [navMenu(ctx, [b], back)]);
+}
+
+/** iPhone / iPad: Safari has no install button, so show the steps. */
+export function iosInstall(ctx: AppCtx, back: () => void): ScreenHandle {
+  const panel = h('div', { class: 'panel', html: `
+    <h2>PUT IT ON YOUR HOME SCREEN</h2>
+    <p>1. In Safari, tap the <b>Share</b> button (the square with the arrow).</p>
+    <p>2. Scroll down and tap <b>Add to Home Screen</b>.</p>
+    <p>3. Open <b>Pistola</b> from your home screen: it runs full screen, like an app, and works offline once it's loaded.</p>
   ` });
   const b = btn('BACK', back);
   const el = h('div', { class: 'screen dim' }, panel, h('div', { class: 'menu' }, b));

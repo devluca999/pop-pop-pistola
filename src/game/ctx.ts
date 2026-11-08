@@ -12,4 +12,6 @@ export interface AppCtx {
   ui: HTMLElement;
   saveSettings(): void;
   applySettings(): void;
+  /** Phones: first tap on the title (go fullscreen in a browser tab). */
+  onFirstTap?(): void;
 }

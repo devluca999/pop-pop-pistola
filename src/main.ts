@@ -9,11 +9,12 @@ import type { CharacterId, MapId } from './types';
 import { MAPS } from './render';
 import type { Difficulty } from './rules';
 import {
-  titleScreen, mainMenu, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle, type MapChoice,
+  titleScreen, mainMenu, iosInstall, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle, type MapChoice,
 } from './ui/screens';
 import { h } from './ui/dom';
 import { deviceSelectSolo, deviceSelectLocal } from './ui/devices';
 import { isTouchDevice } from './ui/touch';
+import { initPwa, installState, promptInstall, goFullscreen, onInstallChange } from './pwa';
 import type { Device } from './settings';
 import { onlineConfigured, openRoom, makeRoomCode, normalizeCode, type Room } from './net/online';
 import type { NetMsg } from './net/types';
@@ -31,7 +32,9 @@ const ctx: AppCtx = {
   get settings() { return settings; },
   saveSettings: () => saveSettings(settings),
   applySettings,
+  onFirstTap: () => { if (isTouchDevice()) goFullscreen(); },
 };
+initPwa();
 
 function applySettings() {
   stage.setPost({ filter: settings.filter, dither: settings.dither });
@@ -49,6 +52,20 @@ function portraitStack(): boolean {
   return window.innerHeight > window.innerWidth * 1.15 && isTouchDevice();
 }
 let stacked = false;
+
+/** Phones and tablets: the scene fills the screen edge to edge (under the notch too). */
+const touchDevice = isTouchDevice();
+document.documentElement.classList.toggle('touch-device', touchDevice);
+stage.fill = touchDevice;
+
+/** Safe-area insets (notch, home bar) in CSS px, read from a probe styled with env(). */
+const safeProbe = document.createElement('div');
+safeProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;inset:0;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+document.body.append(safeProbe);
+function safeInsets() {
+  const cs = getComputedStyle(safeProbe);
+  return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+}
 
 function layout() {
   fitCanvas(canvas); // no-op: the Stage sizes the canvas to fill #app
@@ -68,11 +85,22 @@ function layout() {
     el.style.width = `${r.w}px`;
     el.style.height = `${r.h}px`;
   }
+  if (touchDevice && !stack) {
+    // the scene runs under the notch; keep the HUD and prompts inside the safe area
+    const i = safeInsets();
+    const x0 = Math.max(r.x, i.l), y0 = Math.max(r.y, i.t);
+    const x1 = Math.min(r.x + r.w, window.innerWidth - i.r), y1 = Math.min(r.y + r.h, window.innerHeight - i.b);
+    for (const el of [ui]) {
+      el.style.left = `${x0}px`; el.style.top = `${y0}px`;
+      el.style.width = `${x1 - x0}px`; el.style.height = `${y1 - y0}px`;
+    }
+  }
   if (stack) {
     // the UI layer spans the whole screen; prompts live below the scene
-    ui.style.left = '0px'; ui.style.top = '0px';
-    ui.style.width = `${window.innerWidth}px`; ui.style.height = `${window.innerHeight}px`;
-    document.documentElement.style.setProperty('--scene-h', `${r.y + r.h}px`);
+    const i = safeInsets();
+    ui.style.left = `${i.l}px`; ui.style.top = `${i.t}px`;
+    ui.style.width = `${window.innerWidth - i.l - i.r}px`; ui.style.height = `${window.innerHeight - i.t - i.b}px`;
+    document.documentElement.style.setProperty('--scene-h', `${r.y + r.h - i.t}px`);
   }
   // HUD unit follows the smaller dimension so 21:9 does not blow the HUD up
   document.documentElement.style.setProperty('--u', `${v.u}px`);
@@ -85,7 +113,10 @@ stage.onResize(layout);
 let screen: ScreenHandle | null = null;
 let duel: Duel | null = null;
 let menuIndex = 0;
-const show = (s: ScreenHandle | null) => { screen?.dispose(); screen = s; };
+let menuShowing = false;
+const show = (s: ScreenHandle | null) => { menuShowing = false; screen?.dispose(); screen = s; };
+// the browser can offer installing at any moment: redraw the menu so INSTALL APP appears
+onInstallChange(() => { if (menuShowing) toMenu(); });
 
 function toTitle() { show(titleScreen(ctx, toMenu)); }
 
@@ -98,7 +129,13 @@ function toMenu() {
     online: () => { menuIndex = 2; show(deviceSelectSolo(ctx, (d) => { devices = [d, d]; toOnline(); }, toMenu)); },
     settings: () => { menuIndex = 3; show(settingsScreen(ctx, toMenu)); },
     howto: () => { menuIndex = 4; show(howTo(ctx, toMenu)); },
+    install: installState() === 'none' ? undefined : () => {
+      menuIndex = 5;
+      if (installState() === 'ios') show(iosInstall(ctx, toMenu));
+      else promptInstall().then(() => toMenu());
+    },
   }, menuIndex));
+  menuShowing = true;
 }
 
 /** Controllers picked on the controller screen (by player index). */

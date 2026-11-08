@@ -46,4 +46,10 @@ describe('computeView', () => {
     expect(r.image.x + r.image.w).toBeLessThanOrEqual(844 - 47 + 0.5);
     expect(r.image.y + r.image.h).toBeLessThanOrEqual(390 - 21 + 0.5);
   });
+  it('fill mode (phones) reaches the screen edges instead of snapping to whole-number scales', () => {
+    const v = computeView(844, 390, 2532, 1170, undefined, { fill: true });
+    expect(v.dev.h).toBe(1170);
+    expect(Math.abs(v.dev.w - 2532)).toBeLessThanOrEqual(Math.ceil(v.scale));
+    expect(v.integer).toBe(false);
+  });
 });

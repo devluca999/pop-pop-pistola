@@ -430,3 +430,7 @@ html.portrait-stack .prompt-zone.right { top: calc(var(--scene-h) + (100% - var(
 html.portrait-stack .pv-live { flex-wrap: wrap; justify-content: center; }
 html.portrait-stack .countdown { top: calc(var(--scene-h) + var(--u) * 4); bottom: auto; }
 html.portrait-stack .steady-track { bottom: 12%; width: 44%; }
+
+/* ---------- phones: edge to edge (the HUD keeps to the safe area in layout()) ---------- */
+html.touch-device #app { padding: 0; }
+html.touch-device, html.touch-device body { height: 100%; overscroll-behavior: none; }

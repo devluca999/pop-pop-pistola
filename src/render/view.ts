@@ -43,7 +43,7 @@ export interface StageView {
  * (safe-area insets, CSS px). Height is fixed at 216 low-res pixels; width follows the aspect,
  * clamped to 4:3..21:9. A whole-number upscale is used when it costs at most 10% of the size.
  */
-export function computeView(cssW: number, cssH: number, devW: number, devH: number, pad: Insets = { top: 0, right: 0, bottom: 0, left: 0 }): StageView {
+export function computeView(cssW: number, cssH: number, devW: number, devH: number, pad: Insets = { top: 0, right: 0, bottom: 0, left: 0 }, opts: { fill?: boolean } = {}): StageView {
   cssW = Math.max(1, cssW);
   cssH = Math.max(1, cssH);
   devW = Math.max(1, Math.round(devW));
@@ -61,7 +61,8 @@ export function computeView(cssW: number, cssH: number, devW: number, devH: numb
   let resW: number;
   let scale: number;
   let integer: boolean;
-  if (k >= 1 && k >= fit * INT_KEEP - 1e-6) {
+  // fill (phones): always the exact fit, so the image reaches the screen edges
+  if (!opts.fill && k >= 1 && k >= fit * INT_KEEP - 1e-6) {
     scale = k;
     integer = true;
     // with a whole-number scale, widen the image into any spare width (still within 4:3..21:9)

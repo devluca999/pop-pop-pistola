@@ -96,3 +96,16 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - The map picker sits on character select: ◀ ▶ or ↑ ↓ (P1 in Local Versus), and RANDOM is an option. Online, the host picks and the map is sent with the `start` message.
 - The intro shout is HIGH NOON on Main Street and DUEL! on the other maps, with the map name in a banner.
 - The touch ACTION glyph is a tap ripple (◉), not a pointing hand, which can read as a rude gesture at a glance.
+
+**Mobile + installable app**
+- **Edge to edge.** Phones and tablets scale the image to fill the screen exactly. Pixels stay nearest-neighbour; there's no whole-number snapping, which used to leave bars. The scene runs under the notch, while `layout()` keeps the HUD and prompts inside the safe-area insets.
+- **Fullscreen in the browser.** In a phone browser tab, the first tap on the title asks for fullscreen. iPhone Safari has no fullscreen API, so installing is the way there.
+- **PWA.**
+  - `public/manifest.webmanifest`: display fullscreen (standalone fallback), any orientation, dark theme.
+  - Pixel-art sombrero icons at 192, 512, maskable 512, Apple 180 and favicon 32.
+  - `public/sw.js` (no build plugin):
+    - Pages are network-first, so a new deploy shows up on the next launch.
+    - Hashed assets and Google Fonts are cached, so the game plays offline once loaded.
+    - Online play is never cached.
+- **Install button.** INSTALL APP appears in the main menu when the browser offers installing (Android / desktop Chrome). On iPhone and iPad it shows the Share → Add to Home Screen steps. It's hidden once you're running as an installed app.
+- **STEADY on touch.** The marker balances on an unstable centre: it always slides away unless your thumb holds it. Before, random direction flips sometimes let it pass untouched.

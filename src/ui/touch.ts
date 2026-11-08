@@ -165,6 +165,7 @@ export class TouchControls {
       const dx = (e.clientX - tr.px) * (this.flip(p) ? -1 : 1);
       tr.px = e.clientX;
       this.steadyX[p] += dx / (this.el.getBoundingClientRect().width * 0.25);
+      this.steadyV[p] *= 0.6; // a steady thumb also calms the slide
       return;
     }
     const dx = e.clientX - tr.px, dy = e.clientY - tr.py;
@@ -235,9 +236,10 @@ export class TouchControls {
       const it = this.intents[p];
       const el = this.steadyEls[p];
       if (it.kind !== 'steady' || !el) continue;
-      // drift, with a little wobble that changes direction now and then
-      if (Math.random() < dtMs / 900) this.steadyV[p] = -this.steadyV[p];
-      this.steadyX[p] += this.steadyV[p] * (dtMs / 1000);
+      // the centre is unstable (like balancing): the further off it is, the harder it slides away
+      const dt = dtMs / 1000;
+      this.steadyV[p] += this.steadyX[p] * 3 * dt;
+      this.steadyX[p] += this.steadyV[p] * dt;
       this.steadyX[p] = Math.max(-1.2, Math.min(1.2, this.steadyX[p]));
       el.style.setProperty('--x', String(this.steadyX[p]));
       const out = Math.abs(this.steadyX[p]) > CONFIG.touch.steadySafe;

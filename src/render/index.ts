@@ -163,8 +163,20 @@ export class Stage {
       bottom: parseFloat(cs.paddingBottom) || 0,
       left: parseFloat(cs.paddingLeft) || 0,
     };
-    return computeView(cssW, cssH, dev.w, dev.h, pad);
+    return computeView(cssW, cssH, dev.w, dev.h, pad, { fill: this.fillMode });
   }
+
+  private fillMode = false;
+  /**
+   * Phones: scale the image to fill the screen exactly (nearest-neighbour, no whole-number
+   * snapping), so no bars are left inside the 4:3..21:9 range.
+   */
+  set fill(on: boolean) {
+    if (this.fillMode === on) return;
+    this.fillMode = on;
+    this.resize();
+  }
+  get fill(): boolean { return this.fillMode; }
 
   private applyView(v: StageView): void {
     const old = this.viewNow;
