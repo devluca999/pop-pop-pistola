@@ -21,7 +21,7 @@ export function padLabel(button: number): string {
   return PAD[button] ?? `B${button}`;
 }
 
-/** Arrows are the same on every device; only ACTION changes. '☝' = tap (touch). */
+/** Arrows are the same on every device; only ACTION changes. '◉' = tap (touch). */
 export const ARROW: Record<number, string> = { [BTN.up]: '↑', [BTN.down]: '↓', [BTN.left]: '←', [BTN.right]: '→' };
 
 export interface ButtonLabels {
@@ -39,7 +39,7 @@ export interface ButtonLabels {
  */
 export function bindingLabels(s: Settings, b: 0 | 1, device: Device, solo = false): ButtonLabels {
   if (device === 'gamepad') return { action: 'A', shoot: 'RT', legend: 'D-PAD + A · RT SHOOTS' };
-  if (device === 'touch') return { action: '☝', shoot: '☝', legend: 'SWIPE + TAP' };
+  if (device === 'touch') return { action: '◉', shoot: '◉', legend: 'SWIPE + TAP' };
   const k = s.keys[b];
   const act = keyLabel(k.action);
   if (solo) return { action: act, shoot: act, legend: `WASD / ARROWS + ${act}` };

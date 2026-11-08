@@ -1,11 +1,11 @@
-import type { CharacterId } from '../types';
+import type { CharacterId, MapId } from '../types';
 import type { ExchangePlan, InputEvent, MatchState, WillChoice } from '../rules';
 
 /** Messages between the two online clients. */
 export type NetMsg =
   | { type: 'hello'; role: 'host' | 'guest'; v: number }
   | { type: 'pick'; character: CharacterId }
-  | { type: 'start'; characters: [CharacterId, CharacterId] }
+  | { type: 'start'; characters: [CharacterId, CharacterId]; map?: MapId }
   | { type: 'plan'; ex: number; plan: ExchangePlan; state: MatchState; lead: number }
   | { type: 'input'; ex: number; ev: InputEvent }
   | { type: 'upto'; ex: number; t: number }

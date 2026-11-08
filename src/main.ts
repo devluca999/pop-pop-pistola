@@ -5,13 +5,15 @@ import { Input } from './input';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import type { AppCtx } from './game/ctx';
 import { Duel, type DuelSetup } from './game/duel';
-import type { CharacterId } from './types';
+import type { CharacterId, MapId } from './types';
+import { MAPS } from './render';
 import type { Difficulty } from './rules';
 import {
-  titleScreen, mainMenu, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle,
+  titleScreen, mainMenu, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle, type MapChoice,
 } from './ui/screens';
 import { h } from './ui/dom';
 import { deviceSelectSolo, deviceSelectLocal } from './ui/devices';
+import { isTouchDevice } from './ui/touch';
 import type { Device } from './settings';
 import { onlineConfigured, openRoom, makeRoomCode, normalizeCode, type Room } from './net/online';
 import type { NetMsg } from './net/types';
@@ -39,8 +41,24 @@ function applySettings() {
   document.body.classList.toggle('reduced-motion', settings.reducedMotion);
 }
 
+/**
+ * Phones held upright, playing by touch: the scene sits on top and the prompts get the
+ * space below (instead of letterboxing a tiny 16:9 image in the middle).
+ */
+function portraitStack(): boolean {
+  return window.innerHeight > window.innerWidth * 1.15 && isTouchDevice();
+}
+let stacked = false;
+
 function layout() {
   fitCanvas(canvas); // no-op: the Stage sizes the canvas to fill #app
+  const stack = portraitStack();
+  if (stack !== stacked) {
+    stacked = stack;
+    document.documentElement.classList.toggle('portrait-stack', stack);
+    stage.resize(); // #app changed size: re-measure now, this calls layout again
+    return;
+  }
   // #ui and #crt cover the visible game image only (not the dithered bars)
   const v = stage.view;
   const r = v.image;
@@ -49,6 +67,12 @@ function layout() {
     el.style.top = `${r.y}px`;
     el.style.width = `${r.w}px`;
     el.style.height = `${r.h}px`;
+  }
+  if (stack) {
+    // the UI layer spans the whole screen; prompts live below the scene
+    ui.style.left = '0px'; ui.style.top = '0px';
+    ui.style.width = `${window.innerWidth}px`; ui.style.height = `${window.innerHeight}px`;
+    document.documentElement.style.setProperty('--scene-h', `${r.y + r.h}px`);
   }
   // HUD unit follows the smaller dimension so 21:9 does not blow the HUD up
   document.documentElement.style.setProperty('--u', `${v.u}px`);
@@ -85,16 +109,21 @@ function toDifficulty() {
 }
 
 function toCpuSelect(d: Difficulty) {
-  show(charSelect(ctx, { pickers: [0], devices }, ([mine]) => {
+  show(charSelect(ctx, { pickers: [0], devices }, ([mine], map) => {
     const cpu = ROSTER[Math.floor(Math.random() * ROSTER.length)];
-    startDuel({ mode: 'cpu', characters: [mine, cpu], difficulty: d, localView: 0, devices }, () => toCpuSelect(d));
+    startDuel({ mode: 'cpu', characters: [mine, cpu], difficulty: d, localView: 0, devices, map: resolveMap(map) }, () => toCpuSelect(d));
   }, toDifficulty));
 }
 
 function toLocalSelect() {
-  show(charSelect(ctx, { pickers: [0, 1], devices }, ([a, b]) => {
-    startDuel({ mode: 'local', characters: [a, b], localView: 0, devices }, toLocalSelect);
+  show(charSelect(ctx, { pickers: [0, 1], devices }, ([a, b], map) => {
+    startDuel({ mode: 'local', characters: [a, b], localView: 0, devices, map: resolveMap(map) }, toLocalSelect);
   }, toMenu));
+}
+
+/** RANDOM picks one of the maps. */
+function resolveMap(c: MapChoice): MapId {
+  return c === 'random' ? MAPS[Math.floor(Math.random() * MAPS.length)].id : c;
 }
 
 function startDuel(setup: DuelSetup, rematch: () => void, onMenu: () => void = toMenu) {
@@ -186,6 +215,7 @@ function lobby(role: 'host' | 'guest', code = makeRoomCode()) {
 function onlineSelect(room: Room) {
   let mine: CharacterId | null = null;
   let theirs: CharacterId | null = null;
+  let myMap: MapId = 'noon';
   let started = false;
   const offs: (() => void)[] = [];
   const statusText = () => (theirs ? 'RIVAL LOCKED' : 'RIVAL CHOOSING...');
@@ -193,28 +223,30 @@ function onlineSelect(room: Room) {
     if (started || !mine || !theirs || room.role !== 'host') return;
     started = true;
     const chars: [CharacterId, CharacterId] = [mine, theirs];
-    room.send({ type: 'start', characters: chars });
-    begin(chars);
+    room.send({ type: 'start', characters: chars, map: myMap });
+    begin(chars, myMap);
   };
-  const begin = (chars: [CharacterId, CharacterId]) => {
+  // the host picks the map
+  const begin = (chars: [CharacterId, CharacterId], map: MapId) => {
     started = true;
     offs.forEach((o) => o());
     startDuel(
-      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', devices },
+      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', devices, map },
       () => onlineSelect(room),
       () => { room.leave(); toMenu(); },
     );
   };
   offs.push(room.on((m: NetMsg) => {
     if (m.type === 'pick') { theirs = m.character; sel.setStatus(''); tryStart(); }
-    if (m.type === 'start' && room.role === 'guest') begin(room.role === 'guest' ? m.characters : m.characters);
+    if (m.type === 'start' && room.role === 'guest') begin(m.characters, m.map ?? 'noon');
     if (m.type === 'bye') { offs.forEach((o) => o()); toast('YOUR RIVAL LEFT'); room.leave(); toOnline(); }
   }));
   offs.push(room.onStatus((s) => {
     if (s === 'lost' && !started) { offs.forEach((o) => o()); toast('CONNECTION LOST'); room.leave(); toOnline(); }
   }));
-  const sel = charSelect(ctx, { pickers: [0], devices, title: `ONLINE · ${room.code}`, status: statusText }, ([c]) => {
+  const sel = charSelect(ctx, { pickers: [0], devices, title: `ONLINE · ${room.code}`, status: statusText, mapPicker: room.role === 'host' }, ([c], map) => {
     mine = c;
+    myMap = resolveMap(map);
     room.send({ type: 'pick', character: c });
     tryStart();
   }, () => { offs.forEach((o) => o()); room.leave(); toOnline(); });

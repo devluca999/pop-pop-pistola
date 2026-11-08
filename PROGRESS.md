@@ -44,6 +44,7 @@ Headless Chromium (Playwright, SwiftShader GL) against `render-demo.html` and `i
 - `#ui`/`#crt` match the image rect (checked: 2560x1080 → ui 2520x1080 at x=20; 390x844 → ui 389x288 at y=278). `--u` = min(w/320, h/180): 6 px at 2560x1080 (it would be 7.9 by width alone).
 - The view is measured synchronously in the Stage constructor, so the first frame is already the right size. A ResizeObserver on `#app` and the canvas resizes the target, post pass and camera, and redraws inside the same callback.
 - Headless quirk: Chromium headless reports `devicePixelContentBoxSize` in CSS px under DPR emulation, so the Stage falls back to css x devicePixelRatio when the two disagree.
+- **Phones, touch, real match (lead check):** 390x844 portrait with touch switches to the stacked layout: scene on top (242 px), your prompt full width below it, the rival's prompt underneath, all enlarged. 844x390 landscape keeps the normal layout with the prompts in the side zones. Both screenshots were taken mid-prompt in a Vs CPU touch match. The Midnight and Saloon maps were also checked in-match at 844x390.
 - Unit tests: `src/render/view.test.ts`.
 
 ## Maps (render pass)

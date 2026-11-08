@@ -1,4 +1,5 @@
-import type { CharacterId, FakeKind, PlayerIndex, ScreenSide } from '../types';
+import type { CharacterId, FakeKind, MapId, PlayerIndex, ScreenSide } from '../types';
+import { MAPS } from '../render/maps';
 import {
   CONFIG, BTN, applyExchange, canHeal, cpuExchangeLog, cpuFeintReaction, generatePlan, makeRng, markSeen, randomSeed,
   resolveExchange, newMatch, DRAW_LABEL,
@@ -26,7 +27,9 @@ export interface DuelSetup {
   localView: PlayerIndex;
   net?: NetLink;
   isHost?: boolean;
-  /** Fakes the chosen map can throw during the standoff. */
+  /** Where the duel happens (default High Noon Main Street). Sets the scene, ambience and fakes. */
+  map?: MapId;
+  /** Fakes the map can throw during the standoff (defaults to the map's own list). */
   fakeKinds?: readonly FakeKind[];
   /** Controller each player chose (by player index). Prompts show that device's buttons. */
   devices?: [Device, Device];
@@ -89,6 +92,8 @@ export class Duel {
   /** Touch layer, when anyone at this screen plays by touch. */
   private touch: TouchControls | null = null;
   private lastFrame = 0;
+  private mapName = '';
+  private fakeKinds: readonly FakeKind[] = [];
 
   constructor(private ctx: AppCtx, private setup: DuelSetup, private onExit: (e: DuelExit) => void) {
     this.state = newMatch(setup.characters[0], setup.characters[1]);
@@ -103,6 +108,11 @@ export class Duel {
     const { stage } = ctx;
     const near = setup.characters[setup.localView];
     const far = setup.characters[setup.localView === 0 ? 1 : 0];
+    const map = MAPS.find((m) => m.id === (setup.map ?? 'noon')) ?? MAPS[0];
+    this.mapName = map.name;
+    this.fakeKinds = setup.fakeKinds ?? map.fakes;
+    stage.setMap(map.id);
+    ctx.audio.setAmbience(map.id);
     stage.setMode('duel');
     stage.setDuelists(near, far);
     stage.setSmokeCloud(false);
@@ -266,7 +276,8 @@ export class Duel {
     const { stage, audio } = this.ctx;
     stage.setPose('near', 'idle');
     stage.setPose('far', 'idle');
-    this.shoutAt('HIGH NOON', 1600);
+    this.banner(this.mapName.toUpperCase(), 1500, 'small');
+    this.shoutAt((this.setup.map ?? 'noon') === 'noon' ? 'HIGH NOON' : 'DUEL!', 1600);
     audio.sfx('spurs');
     this.after(500, () => audio.voice(this.state.players[1].character, 'taunt', { pan: this.pan(1) }));
     this.after(1100, () => audio.voice(this.state.players[0].character, 'taunt', { pan: this.pan(0) }));
@@ -274,7 +285,7 @@ export class Duel {
   }
 
   private makePlan(): ExchangePlan {
-    return generatePlan(randomSeed(), { seen: this.state.seen, fakeKinds: this.setup.fakeKinds });
+    return generatePlan(randomSeed(), { seen: this.state.seen, fakeKinds: this.fakeKinds });
   }
 
   private nextExchange() {

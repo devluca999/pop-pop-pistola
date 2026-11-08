@@ -49,7 +49,7 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - Will of God: ← Vaporize, → Full Heal.
 - SEQUENCE = 3-arrow combo, never the same arrow twice in a row.
 - Every draw is on ACTION, so the old "wrong key jams" rule is gone.
-- Tiles show the arrow, or the action glyph for that player's device: SPACE / ENTER, A (RT on draws), or ☝ on touch. CPU and online rivals' tiles use the local player's glyphs, since they press the same buttons.
+- Tiles show the arrow, or the action glyph for that player's device: SPACE / ENTER, A (RT on draws), or ◉ on touch. CPU and online rivals' tiles use the local player's glyphs, since they press the same buttons.
 
 **2. One consistent loop.** Every exchange: READY (2s) → NERVE (3 prompts, 0.6s 3-2-1 before each) → STANDOFF (1.5-4s random; the draw type is announced for the first 0.9s, then fakes and feints) → BELL + DRAW → RESULT (1.5s freeze).
 - A step strip at the top shows the beat. A small legend in each local player's corner shows their inputs.
@@ -75,3 +75,24 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - Fairness: touch times are moved back 35ms (`CONFIG.touch.latencyMs`). Gestures are recognised by context, so inside a prompt a touch is never ambiguous. In READY and the standoff the layer waits to see whether a touch is a tap or a swipe, and back-dates a tap to touch-down. Online, the "known up to" heartbeat never passes an unread touch, so a late-recognised gesture can't change a decided result.
 - Scroll, zoom, pull-to-refresh and text selection are blocked during play (`html.touch-play`). A small II button pauses.
 - Gesture logic is tested in `tests/touch.test.ts` with simulated pointer events (happy-dom). Browser bots proved unreliable for timing because the test tab gets throttled in the background.
+
+**4. Any screen size** (render agent, `src/render/view.ts`):
+- Internal height is always 216 px; width = round(216 × aspect), clamped to 4:3–21:9.
+- Upscaling uses whole-number steps where it can, otherwise nearest-neighbour with no blur.
+- Anything wider than 21:9 or taller than 4:3 gets bars in the same dithered style.
+- A ResizeObserver on `#app` resizes everything inside one callback, and the first frame is already the right size.
+- The field of view widens for narrow screens so the rival and the bell always stay in frame.
+- HUD units follow the smaller side (`--u` = min(w/320, h/180)), and there are safe-area insets for notched phones.
+- Touch phones held upright get a stacked layout: the scene on top, your prompt full width below it, the rival's underneath (`html.portrait-stack`). Anything else keeps the letterboxed scene.
+- Pinch zoom is off during play (`maximum-scale=1, user-scalable=no`).
+
+**5. Maps as data** (`src/render/maps/`: one file per map; palette, lighting, props, fakes):
+- High Noon Main Street (crow, tumbleweed, door, cough).
+- Midnight Lantern Street (lantern flicker).
+- Train Platform (train whistle; a train rolls through about every 45s).
+- Mesa at Sunset (hawk screech).
+- Saloon Interior (glass breaks).
+- Every map keeps a bell behind the rival's head and has its own ambience bed (`audio.setAmbience`).
+- The map picker sits on character select: ◀ ▶ or ↑ ↓ (P1 in Local Versus), and RANDOM is an option. Online, the host picks and the map is sent with the `start` message.
+- The intro shout is HIGH NOON on Main Street and DUEL! on the other maps, with the map name in a banner.
+- The touch ACTION glyph is a tap ripple (◉), not a pointing hand, which can read as a rude gesture at a glance.

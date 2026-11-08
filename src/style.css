@@ -401,3 +401,32 @@ html.touch-play, html.touch-play body { overscroll-behavior: none; touch-action:
   background: var(--cream);
 }
 .steady-track.out .steady-dot { background: #c8321f; }
+
+/* ---------- map picker ---------- */
+.map-row {
+  display: flex; align-items: center; gap: calc(var(--u) * 2); font-size: calc(var(--u) * 3.6); font-weight: 700; color: var(--cream);
+  background: rgba(29,20,14,.85); padding: calc(var(--u) * .8) calc(var(--u) * 3); border: calc(var(--u) * .5) solid var(--cream-dark);
+}
+.map-tag { color: var(--gold); }
+.map-name { min-width: calc(var(--u) * 74); text-align: center; }
+.map-keys { opacity: .6; font-size: calc(var(--u) * 2.8); }
+.map-arrow {
+  font: inherit; font-size: calc(var(--u) * 3.4); background: var(--cream); color: var(--ink); border: 0; cursor: pointer;
+  width: calc(var(--u) * 8); height: calc(var(--u) * 6); display: grid; place-items: center;
+}
+
+/* ---------- portrait phones (touch): scene on top, prompts below ---------- */
+html.portrait-stack #app { bottom: auto; height: calc(100vw * 0.62 + env(safe-area-inset-top, 0px)); overflow: visible; }
+html.portrait-stack #ui { overflow: visible; }
+html.portrait-stack .prompt-zone {
+  bottom: auto; left: calc(var(--u) * 3); right: calc(var(--u) * 3); width: auto; place-items: center;
+  height: calc((100% - var(--scene-h)) * 0.42);
+  /* the lower panel is all prompt: draw it bigger */
+  --u: calc(100vw / 230);
+}
+/* yours on top (full width), the rival's underneath */
+html.portrait-stack .prompt-zone.left { top: calc(var(--scene-h) + 2%); }
+html.portrait-stack .prompt-zone.right { top: calc(var(--scene-h) + (100% - var(--scene-h)) * 0.5); }
+html.portrait-stack .pv-live { flex-wrap: wrap; justify-content: center; }
+html.portrait-stack .countdown { top: calc(var(--scene-h) + var(--u) * 4); bottom: auto; }
+html.portrait-stack .steady-track { bottom: 12%; width: 44%; }

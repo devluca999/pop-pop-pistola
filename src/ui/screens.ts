@@ -1,4 +1,5 @@
-import type { CharacterId, FilterMode, PlayerIndex } from '../types';
+import type { CharacterId, FilterMode, MapId, PlayerIndex } from '../types';
+import { MAPS } from '../render/maps';
 import type { AppCtx } from '../game/ctx';
 import type { MenuInput, GameInput } from '../input';
 import { keyLabel } from '../input/labels';
@@ -181,13 +182,20 @@ export interface CharSelectOpts {
   status?: () => string;
   /** Controllers by player index, for the button hints. */
   devices?: [Device, Device];
+  /** Show the map picker (off for the online guest: the host picks). */
+  mapPicker?: boolean;
 }
+
+export type MapChoice = MapId | 'random';
+const MAP_CHOICES: MapChoice[] = ['random', ...MAPS.map((m) => m.id)];
+let lastMap: MapChoice = 'noon';
+const mapName = (c: MapChoice) => (c === 'random' ? 'RANDOM' : MAPS.find((m) => m.id === c)!.name.toUpperCase());
 
 /**
  * Character select. Each picker moves with their left/right keys and locks with their
  * lock key. Picks stay hidden ("LOCKED") until everyone has locked in.
  */
-export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: CharacterId[]) => void, back: () => void): ScreenHandle & { setStatus(s: string): void } {
+export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: CharacterId[], map: MapChoice) => void, back: () => void): ScreenHandle & { setStatus(s: string): void } {
   ctx.stage.setMode('title');
   const cur = opts.pickers.map((_, i) => i % ROSTER.length);
   const locked = opts.pickers.map(() => false);
@@ -210,11 +218,34 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
       : `P${p + 1}: ${keyLabel(k[p].left)} / ${keyLabel(k[p].right)} MOVE, ${keyLabel(k[p].action)} LOCK`;
     help.textContent = `${part(0)}   ·   ${part(1)}   ·   ESC BACK`;
   } else {
-    help.textContent = dev[0] === 'gamepad' ? 'D-PAD MOVE  ·  A LOCK IN  ·  B BACK' : '← → MOVE  ·  ENTER LOCK IN  ·  ESC BACK';
+    help.textContent = dev[0] === 'gamepad' ? 'D-PAD MOVE  ·  A LOCK IN  ·  ↑ ↓ MAP  ·  B BACK'
+      : dev[0] === 'touch' ? 'TAP A DUELIST  ·  ◀ ▶ CHANGES THE MAP'
+      : '← → MOVE  ·  ENTER LOCK IN  ·  ↑ ↓ MAP  ·  ESC BACK';
   }
+  // map picker: ↑ / ↓ (P1 in local versus), or tap the arrows
+  let mapIdx = Math.max(0, MAP_CHOICES.indexOf(lastMap));
+  const mapLabel = h('span', { class: 'map-name' });
+  const prevMap = h('button', { class: 'map-arrow', 'aria-label': 'Previous map' }, '◀');
+  const nextMap = h('button', { class: 'map-arrow', 'aria-label': 'Next map' }, '▶');
+  const mapRow = h('div', { class: 'map-row' }, h('span', { class: 'map-tag' }, 'MAP'), prevMap, mapLabel, nextMap,
+    h('span', { class: 'map-keys' }, two ? `P1 ${keyLabel(k[0].up)}/${keyLabel(k[0].down)}` : '↑ / ↓'));
+  const showMap = opts.mapPicker !== false;
+  const stepMap = (d: number) => {
+    mapIdx = (mapIdx + d + MAP_CHOICES.length) % MAP_CHOICES.length;
+    lastMap = MAP_CHOICES[mapIdx];
+    ctx.audio.sfx('uiMove');
+    paintMap();
+  };
+  const paintMap = () => {
+    const c = MAP_CHOICES[mapIdx];
+    mapLabel.textContent = mapName(c);
+    if (c !== 'random' && ctx.stage.map !== c) ctx.stage.setMap(c);
+  };
+  prevMap.addEventListener('click', () => stepMap(-1));
+  nextMap.addEventListener('click', () => stepMap(1));
   // skill sheet for whatever each picker is hovering
   const sheets = opts.pickers.map((p) => h('div', { class: `skills${two ? ` p${p + 1}` : ''}` }));
-  const el = h('div', { class: 'screen dim' }, h('div', { class: 'title-label' }, opts.title ?? 'CHOOSE YOUR DUELIST'), h('div', { class: 'picker' }, ...cards), h('div', { class: 'skills-wrap' }, ...sheets), status, help);
+  const el = h('div', { class: 'screen dim' }, h('div', { class: 'title-label' }, opts.title ?? 'CHOOSE YOUR DUELIST'), h('div', { class: 'picker' }, ...cards), h('div', { class: 'skills-wrap' }, ...sheets), ...(showMap ? [mapRow] : []), status, help);
 
   const paint = () => {
     cards.forEach((card, ci) => {
@@ -249,7 +280,7 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
     if (locked.every(Boolean)) {
       finished = true;
       ctx.audio.sfx('spurs');
-      setTimeout(() => done(cur.map((c) => ROSTER[c])), 450);
+      setTimeout(() => done(cur.map((c) => ROSTER[c]), MAP_CHOICES[mapIdx]), 450);
     }
   };
   // tap / click a card: picks for the first player still choosing (touch and mouse)
@@ -265,6 +296,7 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
       const pi = e.player;
       if (e.slot === BTN.left) move(pi, -1);
       else if (e.slot === BTN.right) move(pi, 1);
+      else if (showMap && pi === 0 && (e.slot === BTN.up || e.slot === BTN.down)) stepMap(e.slot === BTN.up ? -1 : 1);
       else if (e.slot === BTN.action) lock(pi);
     }));
     offs.push(ctx.input.onMenu((m) => { if (m === 'back') { ctx.audio.sfx('uiBack'); back(); } }));
@@ -272,11 +304,13 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
     offs.push(ctx.input.onMenu((m) => {
       if (m === 'left') move(0, -1);
       else if (m === 'right') move(0, 1);
+      else if (showMap && (m === 'up' || m === 'down')) stepMap(m === 'up' ? -1 : 1);
       else if (m === 'confirm') lock(0);
       else if (m === 'back') { ctx.audio.sfx('uiBack'); back(); }
     }));
   }
   paint();
+  if (showMap) paintMap();
   const handle = mount(ctx, el, offs);
   return { ...handle, setStatus: () => paint() };
 }

@@ -152,7 +152,7 @@ export class PromptView {
         parts.push(this.counter);
       }
     }
-    if (this.o.gesture) parts.push(h('div', { class: 'pv-gesture' }, `☝ ${this.o.gesture}`));
+    if (this.o.gesture) parts.push(h('div', { class: 'pv-gesture' }, this.o.gesture));
     const holder = h('div', { class: `pv-live ${wob}` }, ...parts);
     this.body.replaceChildren(holder);
   }
