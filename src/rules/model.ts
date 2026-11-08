@@ -1,12 +1,23 @@
-import type { CharacterId, FakeKind, PlayerIndex } from '../types';
+import type { CharacterId, FakeKind } from '../types';
+import type { DrawType, PromptType } from './config';
 
 /** Number of keys in each player's prompt set. Plans refer to keys by slot index. */
 export const KEY_SLOTS = 6;
 
 export interface PromptPlan {
-  t: number;              // start time (ms from exchange start)
-  hold: boolean;
-  slots: [number, number]; // key slot for each player
+  type: PromptType;
+  /** Countdown starts here; the prompt shows at t; it closes at end. */
+  c: number;
+  t: number;
+  end: number;
+  /** First time this type appears in the match: show a mini demo during the countdown. */
+  demo: boolean;
+  /** Key slots per player: 1 key, or orderLength keys for IN ORDER. */
+  keys: [number[], number[]];
+  /** RELEASE: when the tile says RELEASE (ms after t). */
+  cueMs?: number;
+  /** TIME IT: arc centre per player (ms after t). */
+  arcMs?: [number, number];
 }
 
 export interface FakePlan {
@@ -18,24 +29,37 @@ export interface FakePlan {
 export interface ExchangePlan {
   seed: number;
   prompts: PromptPlan[];
+  /** Draw countdown starts (the standoff begins here: drawing from now on is early). */
   standoffStart: number;
+  countdownEnd: number;
+  drawType: DrawType;
+  drawDemo: boolean;
   fakes: FakePlan[];
   bellT: number;
+  /** RING / SPEED TAP: key slot per player. */
   drawSlots: [number, number];
+  /** WHEEL: arc centre per player, ms into each needle sweep. */
+  wheelArc: [number, number];
 }
 
 export type InputEvent =
   | { t: number; kind: 'press'; slot: number }
   | { t: number; kind: 'release'; slot: number }
+  | { t: number; kind: 'action' }
   | { t: number; kind: 'heal' }
   | { t: number; kind: 'feint' };
+
+/** Effects that last exactly one exchange (the next one), then clear. They never stack. */
+export interface StatusEffects {
+  blind: boolean;   // starts the exchange with blindFlinches
+  smoke: boolean;   // Dusty's smoke hides your prompt tiles
+}
 
 export interface PlayerState {
   character: CharacterId;
   hearts: number;
   healsLeft: number;
-  /** Flinches carried into the next nerve phase (e.g. from being blinded). */
-  carryFlinches: number;
+  status: StatusEffects;
   /** Sister Mercy's charge (consecutive blinds). */
   charge: number;
   fullHealUsed: boolean;
@@ -44,9 +68,9 @@ export interface PlayerState {
 export interface MatchState {
   players: [PlayerState, PlayerState];
   exchange: number;
-  /** smoke[i] = player i's prompt tile is partly hidden by Dusty's smoke this exchange. */
-  smoke: [boolean, boolean];
-  winner: PlayerIndex | 'draw' | null;
+  /** Prompt and draw types already seen this match (no more demos for these). */
+  seen: string[];
+  winner: 0 | 1 | 'draw' | null;
 }
 
 export type PromptStatus = 'pending' | 'ok' | 'beaten' | 'miss' | 'slow';
@@ -55,21 +79,22 @@ export interface PromptOutcome {
   status: PromptStatus;
   /** Completion time (ok/beaten/slow) or the time the miss was decided. */
   t: number | null;
-  /** First press time inside the window (for showing a pressed tile). */
+  /** First press time inside the window. */
   pressT: number | null;
   holding: boolean;
+  /** MASH / IN ORDER progress, TIME IT not used. */
+  count: number;
 }
 
 export interface FeintOutcome {
-  by: PlayerIndex;
+  by: 0 | 1;
   t: number;
   status: 'pending' | 'bit' | 'whiff';
-  /** Time the victim bit (if bit). */
   biteT: number | null;
 }
 
 export interface DrawOutcome {
-  pressT: number;         // absolute exchange time of the correct press
+  pressT: number;         // absolute exchange time the draw completed
   reaction: number;       // ms after the bell
   effective: number;      // reaction + character draw delay
   perfect: boolean;
@@ -80,20 +105,26 @@ export type OutcomeKind = 'early' | 'reset' | 'shot' | 'trade' | 'blind' | 'will
 
 export interface Outcome {
   kind: OutcomeKind;
-  /** The player who won the draw (shot/blind/will), or the player who drew early. */
-  actor: PlayerIndex | null;
+  actor: 0 | 1 | null;
   damage: [number, number];
   blinded: [boolean, boolean];
   perfect: [boolean, boolean];
-  /** For early draws: the fake that tricked them, if any. */
   fake: FakePlan | null;
-  t: number; // time the outcome was decided
+  t: number;
+}
+
+/** Per-player numbers for the draw at the bell (they shrink with flinches). */
+export interface DrawWindow {
+  /** RING: gold band width. WHEEL: perfect slice half-width. SPEED: perfect span. */
+  perfect: number;
+  /** WHEEL: success arc half-width (0 for other types). */
+  arcHalf: number;
 }
 
 export interface ExchangeResult {
   done: boolean;
   healed: [boolean, boolean];
-  hearts: [number, number];         // hearts after heals, before outcome damage
+  hearts: [number, number];
   drunk: [boolean, boolean];
   cigar: [boolean, boolean];
   will: [boolean, boolean];
@@ -101,8 +132,12 @@ export interface ExchangeResult {
   prompts: [PromptOutcome, PromptOutcome][];
   feints: FeintOutcome[];
   flinches: [number, number];
-  goldBand: [number, number];       // band width in ms at the bell
-  jammedUntil: [number, number];    // absolute time; 0 if not jammed
+  drawWin: [DrawWindow, DrawWindow];
+  /** Back-compat alias: RING gold band width per player. */
+  goldBand: [number, number];
+  jammedUntil: [number, number];
+  /** SPEED TAP progress per player. */
+  speedCount: [number, number];
   draws: [DrawOutcome | null, DrawOutcome | null];
   outcome: Outcome | null;
 }

@@ -5,7 +5,7 @@
 | 1 | Scaffold, repo, Vercel pipeline | done |
 | 2 | Render target, dither post-process, filters, high-noon street | done (revised: smooth hi-res + always-on Bayer dither) |
 | 3 | Characters from primitives, poses | done |
-| 4 | Rules module + tests | done (47 Vitest tests incl. netcode determinism) |
+| 4 | Rules module + tests | done (64 tests: 7 prompt types, 3 draw types, look-alike keys, one-round effects, netcode) |
 | 5 | QTE engine, nerve, fakes, bell, ring, resolution, hearts | done |
 | 6 | Heals, Mercy kit, feint, Last Stand, Dusty's smoke | done |
 | 7 | Vs CPU, Local Versus, menus, character select | done, browser-tested with bots |

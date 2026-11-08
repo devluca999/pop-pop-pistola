@@ -4,7 +4,7 @@ import type { ExchangePlan, InputEvent, MatchState, WillChoice } from '../rules'
 /** Messages between the two online clients. */
 export type NetMsg =
   | { type: 'hello'; role: 'host' | 'guest'; v: number }
-  | { type: 'pick'; character: CharacterId }
+  | { type: 'pick'; character: CharacterId; labels?: string[] }
   | { type: 'start'; characters: [CharacterId, CharacterId] }
   | { type: 'plan'; ex: number; plan: ExchangePlan; state: MatchState; lead: number }
   | { type: 'input'; ex: number; ev: InputEvent }

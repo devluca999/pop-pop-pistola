@@ -4,7 +4,9 @@ export type SfxName =
   | 'bellToll' | 'gunshot' | 'shotgun' | 'click' | 'jam' | 'crow' | 'tumbleweed' | 'door' | 'cough'
   | 'spurs' | 'glassClink' | 'cigarPuff' | 'lanternWhoosh' | 'choir' | 'boo' | 'cheer' | 'heartCrack'
   | 'hit' | 'fall' | 'hatFly' | 'promptGood' | 'promptBad' | 'flinch' | 'perfect' | 'uiMove'
-  | 'uiSelect' | 'uiBack' | 'pop' | 'fuego' | 'feint' | 'blind' | 'vaporize' | 'heal';
+  | 'uiSelect' | 'uiBack' | 'pop' | 'fuego' | 'feint' | 'blind' | 'vaporize' | 'heal'
+  | 'tapTick' | 'holdRise' | 'mashClick' | 'timeTick' | 'wheelTick' | 'releasePop' | 'orderBlip'
+  | 'steadyHum' | 'countTick' | 'countGo';
 
 export type MusicTrack = 'title' | 'duel' | 'win' | 'lose' | 'none';
 

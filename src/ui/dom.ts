@@ -1,3 +1,4 @@
+import { pixelText } from './pixelfont';
 /** Tiny DOM helpers for the HTML overlay. */
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K, attrs: Record<string, string | number | boolean | undefined> = {}, ...kids: (Node | string | null | undefined | false)[]
@@ -14,8 +15,16 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+/** A cream keycap tile. The label is drawn in the hand-tuned pixel font so look-alikes stay apart. */
 export function tile(label: string, cls = ''): HTMLDivElement {
-  return h('div', { class: `tile ${cls}`.trim() }, label) as HTMLDivElement;
+  const el = h('div', { class: `tile ${cls}`.trim() }) as HTMLDivElement;
+  if (label) {
+    const n = [...label].length;
+    el.innerHTML = pixelText(label);
+    el.style.setProperty('--n', String(n));
+    if (n > 2) el.classList.add('wide');
+  }
+  return el;
 }
 
 /** Big shout text made of keycap tiles, e.g. POP! or FUEGO! */

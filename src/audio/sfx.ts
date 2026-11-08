@@ -375,17 +375,101 @@ const recipes: Record<SfxName, Recipe> = {
       tone(s, o, { f: mtof(m + 12) * r, t, a: 0.01, d: 0.4, g: 0.05 });
     });
   },
+
+  // ---------- Prompt types ----------
+
+  tapTick: (s, o, r) => {
+    burst(s, o, { t: s.t, d: 0.02, g: 0.6, type: 'bandpass', f: 3800 * r, q: 3 });
+    tone(s, o, { type: 'triangle', f: 1900 * r, t: s.t, d: 0.035, g: 0.22 });
+  },
+
+  holdRise: (s, o, r) => {
+    const t = s.t;
+    const amp = s.gain(0, o);
+    ahr(amp.gain, t, 0.28, 0.04, 0.46, 0.1, 0.9);
+    const osc = s.osc('triangle', 300 * r, t, t + 0.65, amp);
+    sweep(osc.frequency, t, 300 * r, 900 * r, 0.6);
+    const sine = s.osc('sine', 600 * r, t, t + 0.65, s.gain(0.4, amp));
+    sweep(sine.frequency, t, 600 * r, 1800 * r, 0.6);
+    const vib = s.osc('sine', 7, t, t + 0.65);
+    vib.connect(s.gain(12 * r, osc.frequency));
+  },
+
+  mashClick: (s, o, r) => {
+    const t = s.t;
+    const v = rnd(0.92, 1.08) * r;
+    burst(s, o, { t, d: 0.025, g: 0.75, type: 'bandpass', f: 2400 * v, q: 2 });
+    tone(s, o, { type: 'square', f: 420 * v, f2: 180 * v, glide: 0.04, t, d: 0.05, g: 0.22 });
+    tone(s, o, { f: 140 * v, f2: 70, t, d: 0.06, g: 0.5 });
+  },
+
+  timeTick: (s, o, r) => {
+    // tick ... tock
+    for (const [dt, f, g] of [[0, 2600, 0.5], [0.22, 1700, 0.42]] as const) {
+      const t = s.t + dt;
+      burst(s, o, { t, d: 0.018, g, type: 'bandpass', f: f * r, q: 6 });
+      tone(s, o, { type: 'triangle', f: f * 0.5 * r, t, d: 0.03, g: g * 0.35 });
+    }
+  },
+
+  wheelTick: (s, o, r) => {
+    burst(s, o, { t: s.t, d: 0.01, g: 0.22, type: 'bandpass', f: 4200 * r * rnd(0.97, 1.03), q: 5 });
+  },
+
+  releasePop: (s, o, r) => {
+    const t = s.t;
+    tone(s, o, { type: 'triangle', f: 1400 * r, f2: 350 * r, glide: 0.07, t, a: 0.001, d: 0.08, g: 0.45 });
+    burst(s, o, { t, d: 0.03, g: 0.4, type: 'highpass', f: 2000 * r, f2: 6000 * r, sweepT: 0.03 });
+  },
+
+  orderBlip: (s, o, r) => {
+    tone(s, o, { type: 'square', f: 660 * r, t: s.t, d: 0.08, g: 0.12 });
+    tone(s, o, { f: 1320 * r, t: s.t, d: 0.1, g: 0.15 });
+  },
+
+  steadyHum: (s, o, r) => {
+    const t = s.t;
+    const amp = s.gain(0, o);
+    ahr(amp.gain, t, 0.35, 0.12, 0.5, 0.2, 0.85);
+    const lp = s.filter('lowpass', 420, 2, amp);
+    for (const [f, det] of [[55, 0], [55, 9], [82.4, -5]] as const) {
+      const osc = s.osc('sawtooth', f * r, t, t + 0.85, lp);
+      osc.detune.value = det;
+    }
+    const lfo = s.osc('sine', 3.2, t, t + 0.85);
+    lfo.connect(s.gain(140, lp.frequency));
+  },
+
+  // ---------- Countdown ----------
+
+  countTick: (s, o, r) => {
+    const t = s.t;
+    // woodblock: two damped inharmonic modes + knock
+    tone(s, o, { f: 880 * r, t, d: 0.07, g: 0.45 });
+    tone(s, o, { f: 1870 * r, t, d: 0.04, g: 0.18 });
+    burst(s, o, { t, d: 0.012, g: 0.4, type: 'bandpass', f: 2500 * r, q: 2 });
+  },
+
+  countGo: (s, o, r) => {
+    const t = s.t;
+    for (const m of [84, 88, 91]) tone(s, o, { type: 'triangle', f: mtof(m) * r, t, a: 0.004, d: 0.45, g: 0.18 });
+    tone(s, o, { f: mtof(96) * r, t: t + 0.02, d: 0.5, g: 0.08 });
+    burst(s, o, { t, d: 0.05, g: 0.45, type: 'bandpass', f: 3000 * r, q: 1.5 });
+    tone(s, o, { f: 1100 * r, t, d: 0.08, g: 0.35 });
+  },
 };
 
 /** Reverb send per sound (0 = dry). */
 const REV: Partial<Record<SfxName, number>> = {
   bellToll: 0.7, gunshot: 0.45, shotgun: 0.5, choir: 0.8, perfect: 0.3, heal: 0.4, crow: 0.25,
   door: 0.2, fall: 0.2, lanternWhoosh: 0.3, fuego: 0.3, glassClink: 0.2, boo: 0.3, cheer: 0.25, blind: 0.3, vaporize: 0.3,
+  countGo: 0.25, holdRise: 0.15, steadyHum: 0.15, tapTick: 0.03, mashClick: 0.03, wheelTick: 0.02,
 };
 
 /** Base level per sound so callers don't need to balance them. */
 const LEVEL: Partial<Record<SfxName, number>> = {
   bellToll: 1, gunshot: 0.9, shotgun: 0.9, uiMove: 0.6, spurs: 0.8, boo: 0.9, cheer: 0.8, choir: 0.7,
+  wheelTick: 0.5, mashClick: 0.8, steadyHum: 0.9, countTick: 0.85, countGo: 0.9,
 };
 
 let crunch: Float32Array<ArrayBuffer> | null = null;

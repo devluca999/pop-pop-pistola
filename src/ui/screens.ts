@@ -231,19 +231,37 @@ export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
   const kc = (s: string) => `<span class="kc">${s}</span>`;
   const p1 = k[0].prompt.map(keyLabel).map(kc).join(' ');
   const p2 = k[1].prompt.map(keyLabel).map(kc).join(' ');
+  const act = (c: string) => (c === 'Space' ? 'SPACE' : c === 'Enter' ? 'ENTER' : keyLabel(c));
   const panel = h('div', { class: 'panel', html: `
     <h2>HOW TO PLAY</h2>
-    <p>Two duelists. Three hearts each. First to zero loses. Every exchange takes about ten seconds:</p>
+    <p>Two duelists, three hearts each. First to zero loses. Each exchange takes about 12 seconds. Your prompts always appear on your own side of the screen, framed in your colour (left red, right blue).</p>
     <h3>1 · READY</h3><p>Heal now if your duelist can (${kc(keyLabel(k[0].heal))} / ${kc(keyLabel(k[1].heal))}).</p>
-    <h3>2 · NERVE</h3><p>Three key tiles pop up. Press yours fast, and hold it if it says HOLD. Wrong, late or slower than your rival = a <b>flinch</b>. Each flinch shrinks your gold band; 3 flinches and there is none.</p>
-    <h3>3 · STANDOFF</h3><p>Wait for the <b>church bell</b>. Crows, tumbleweeds, doors and coughs are fakes. Draw on a fake and you lose a heart while the crowd boos. Hector and Mercy can <b>feint</b> (${kc(keyLabel(k[0].feint))} / ${kc(keyLabel(k[1].feint))}): if the rival twitches within half a second they get 2 flinches; otherwise you get 1.</p>
-    <h3>4 · FUEGO!</h3><p>The bell rings and you each get a key. Faster correct press shoots first. A wrong key jams the gun for 0.5s. Press while the closing ring sits in the <b>gold band</b> for a perfect draw (more damage). Within 120ms of each other is a trade.</p>
+    <h3>2 · NERVE (3 PROMPTS)</h3><p>A quick 3-2-1, then a prompt. The label above the tile tells you what to do:</p>
+    <ul>
+      <li><b>TAP</b>: press the key once, fast.</li>
+      <li><b>HOLD</b>: press and keep holding until the bar fills.</li>
+      <li><b>MASH</b>: hit the key ${CONFIG.nerve.mashCount} times; the counter drops.</li>
+      <li><b>TIME IT</b>: press when the needle is in the gold arc.</li>
+      <li><b>RELEASE</b>: press and hold, then let go when it says LET GO!</li>
+      <li><b>IN ORDER</b>: press the keys left to right.</li>
+      <li><b>STEADY</b>: do NOT press anything.</li>
+    </ul>
+    <p>Wrong, late, or slower than your rival = a <b>flinch</b>. Flinches shrink your perfect window; 3 flinches and there is none. The first time a prompt type shows up, you get a one-second demo.</p>
+    <h3>3 · DRAW COUNTDOWN + STANDOFF</h3><p>A full 3-2-1 reveals how this draw works: <b>RING</b>, <b>WHEEL</b> or <b>SPEED TAP</b>. Then wait for the <b>church bell</b>. Crows, tumbleweeds, doors and coughs are fakes. Drawing early costs a heart while the crowd boos. Hector and Mercy can <b>feint</b> (${kc(keyLabel(k[0].feint))} / ${kc(keyLabel(k[1].feint))}): if the rival twitches within half a second they get 2 flinches; otherwise you get 1.</p>
+    <h3>4 · FUEGO!</h3>
+    <ul>
+      <li><b>RING</b>: press your key. Faster shoots first; press as the ring hits the gold band for a perfect draw.</li>
+      <li><b>WHEEL</b>: press ACTION (${kc(act(k[0].action))} / ${kc(act(k[1].action))}, pad A) while the needle is in the gold arc. The thin cream slice is perfect. Missing the arc jams you until the next sweep.</li>
+      <li><b>SPEED TAP</b>: hit your key ${CONFIG.draw.speedCount} times. First to finish shoots; all taps in a tight burst is perfect.</li>
+    </ul>
+    <p>A wrong key jams the gun for 0.5s. Finishing within 120ms of each other is a trade.</p>
+    <h3>ONE-ROUND EFFECTS</h3><p><b>Blinded</b> (Sister Mercy's lantern): 2 flinches next exchange. <b>Smoke</b> (Dusty's shotgun or cigar): your next prompts are half hidden. Both last one exchange, show a 1 ROUND tag under your hearts, and never stack.</p>
     <h3>THE DUELISTS</h3>
     <p><b>Big Hat Hector</b>: revolver, hit 1, perfect 2. Whiskey heals 1 (x2) but he's drunk: wobbly prompts and 2 flinches.</p>
-    <p><b>Lil' Dusty</b>: sawed-off, draws 150ms slower, hit 2, perfect 3, wins trades (deals 2, takes 1). Cigar heals 1 (x2) but his stare-down presses never count as first. His smoke hides your next prompt.</p>
-    <p><b>Sister Smokin' Mercy</b>: her lantern flash <b>blinds</b> (no damage, the rival starts the next exchange with 2 flinches) and wins trades outright. Two blinds in a row = <b>Will of God</b>: win that draw to Vaporize (instant win) or Full Heal (once).</p>
-    <p><b>Last Stand</b>: at 1 heart your gold band is wider.</p>
-    <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint. Rebind in Settings.</p>
+    <p><b>Lil' Dusty</b>: sawed-off, draws 150ms slower, hit 2, perfect 3, wins trades (deals 2, takes 1). Cigar heals 1 (x2) but his stare-down presses never count as first.</p>
+    <p><b>Sister Smokin' Mercy</b>: her lantern flash blinds (no damage) and wins trades outright. Two blinds in a row = <b>Will of God</b>: win that draw to Vaporize (instant win) or Full Heal (once).</p>
+    <p><b>Last Stand</b>: at 1 heart your perfect window is wider.</p>
+    <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint, A = action. Rebind in Settings.</p>
   ` });
   const b = btn('BACK', back);
   const el = h('div', { class: 'screen dim' }, panel, h('div', { class: 'menu' }, b));
@@ -258,7 +276,7 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
   const panel = h('div', { class: 'panel' });
   const el = h('div', { class: 'screen dim' }, panel);
   let tab: 'video' | 'audio' | 'controls' = 'video';
-  let capture: { p: PlayerIndex; what: 'prompt' | 'heal' | 'feint'; slot: number; pad: boolean } | null = null;
+  let capture: { p: PlayerIndex; what: 'prompt' | 'heal' | 'feint' | 'action'; slot: number; pad: boolean } | null = null;
   let stopCapture: (() => void) | null = null;
 
   const save = () => { ctx.saveSettings(); ctx.applySettings(); };
@@ -306,7 +324,7 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
     } else {
       const t = h('div', { class: 'bind-table' });
       t.append(h('div', {}, ''), h('div', {}, 'P1'), h('div', {}, 'P2'));
-      const bindBtn = (p: PlayerIndex, what: 'prompt' | 'heal' | 'feint', slot: number, pad: boolean) => {
+      const bindBtn = (p: PlayerIndex, what: 'prompt' | 'heal' | 'feint' | 'action', slot: number, pad: boolean) => {
         const label = pad
           ? padLabel(what === 'prompt' ? s.pads[p].prompt[slot] : s.pads[p][what])
           : keyLabel(what === 'prompt' ? s.keys[p].prompt[slot] : s.keys[p][what]);
@@ -322,6 +340,7 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
         }
         t.append(h('div', {}, 'HEAL'), bindBtn(0, 'heal', 0, pad), bindBtn(1, 'heal', 0, pad));
         t.append(h('div', {}, 'FEINT'), bindBtn(0, 'feint', 0, pad), bindBtn(1, 'feint', 0, pad));
+        t.append(h('div', {}, 'ACTION (WHEEL)'), bindBtn(0, 'action', 0, pad), bindBtn(1, 'action', 0, pad));
       }
       const reset = h('button', { class: 'btn', style: 'margin-top:calc(var(--u)*3)' }, 'RESET TO DEFAULTS');
       reset.onclick = () => { s.keys = structuredClone(DEFAULT_KEYS); s.pads = structuredClone(DEFAULT_PADS); save(); ctx.audio.sfx('uiBack'); render(); };
@@ -347,6 +366,7 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
         if (i >= 0) pb.prompt[i] = old;
         if (pb.heal === code) pb.heal = old;
         if (pb.feint === code) pb.feint = old;
+        if (pb.action === code) pb.action = old;
       }
       const b = s.keys[c.p];
       if (c.what === 'prompt') b.prompt[c.slot] = code; else b[c.what] = code;

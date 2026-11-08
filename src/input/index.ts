@@ -3,7 +3,7 @@ import type { Settings } from '../settings';
 
 export type GameInput =
   | { player: PlayerIndex; kind: 'press' | 'release'; slot: number; t: number; pad: boolean }
-  | { player: PlayerIndex; kind: 'heal' | 'feint'; t: number; pad: boolean };
+  | { player: PlayerIndex; kind: 'heal' | 'feint' | 'action'; t: number; pad: boolean };
 
 export type MenuInput = 'up' | 'down' | 'left' | 'right' | 'confirm' | 'back';
 
@@ -39,15 +39,20 @@ export class Input {
   onRawKey(f: Listener<KeyboardEvent>) { this.rawL.push(f); return () => { this.rawL = this.rawL.filter((x) => x !== f); }; }
   onRawPad(f: Listener<{ pad: number; button: number }>) { this.padRawL.push(f); return () => { this.padRawL = this.padRawL.filter((x) => x !== f); }; }
 
+  /**
+   * Listener snapshot for the event being handled. One key can produce a game event and a
+   * menu event (Enter is P2's action key and menu confirm); a screen opened by the first
+   * must not also receive the second.
+   */
+  private snap: { game: Listener<GameInput>[]; menu: Listener<MenuInput>[] } | null = null;
   private emitGame(e: GameInput) {
     if (!this.twoPlayers) {
       if (e.player !== 0) return;
       e = { ...e, player: this.soloPlayer };
     }
-    for (const f of [...this.gameL]) f(e);
+    for (const f of this.snap?.game ?? [...this.gameL]) if (this.gameL.includes(f)) f(e);
   }
-  // Iterate over copies: a listener may open a new screen that subscribes mid-event.
-  private emitMenu(m: MenuInput) { for (const f of [...this.menuL]) f(m); }
+  private emitMenu(m: MenuInput) { for (const f of this.snap?.menu ?? [...this.menuL]) if (this.menuL.includes(f)) f(m); }
 
   private onKey(e: KeyboardEvent, down: boolean) {
     if (this.rawL.length && down) {
@@ -57,6 +62,11 @@ export class Input {
     }
     if (down && e.repeat) return;
     if (down) this.held.add(e.code); else this.held.delete(e.code);
+    this.snap = { game: [...this.gameL], menu: [...this.menuL] };
+    try { this.handleKey(e, down); } finally { this.snap = null; }
+  }
+
+  private handleKey(e: KeyboardEvent, down: boolean) {
     const s = this.settings();
     const t = e.timeStamp || performance.now();
     let used = false;
@@ -64,6 +74,7 @@ export class Input {
       const b = s.keys[p];
       const slot = b.prompt.indexOf(e.code);
       if (slot >= 0) { this.emitGame({ player: p, kind: down ? 'press' : 'release', slot, t, pad: false }); used = true; }
+      else if (down && e.code === b.action) { this.emitGame({ player: p, kind: 'action', t, pad: false }); used = true; }
       else if (down && e.code === b.heal) { this.emitGame({ player: p, kind: 'heal', t, pad: false }); used = true; }
       else if (down && e.code === b.feint) { this.emitGame({ player: p, kind: 'feint', t, pad: false }); used = true; }
     }
@@ -76,6 +87,11 @@ export class Input {
 
   /** Poll gamepads; call once per frame. */
   poll() {
+    this.snap = { game: [...this.gameL], menu: [...this.menuL] };
+    try { this.pollPads(); } finally { this.snap = null; }
+  }
+
+  private pollPads() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const s = this.settings();
     for (let gi = 0; gi < pads.length; gi++) {
@@ -92,6 +108,8 @@ export class Input {
         if (down) for (const f of [...this.padRawL]) f({ pad: gi, button: bi });
         if (this.padRawL.length) continue;
         const slot = b.prompt.indexOf(bi);
+        // the action button can share a prompt button (A): it then fires both
+        if (down && bi === b.action) this.emitGame({ player, kind: 'action', t, pad: true });
         if (slot >= 0) this.emitGame({ player, kind: down ? 'press' : 'release', slot, t, pad: true });
         else if (down && bi === b.heal) this.emitGame({ player, kind: 'heal', t, pad: true });
         else if (down && bi === b.feint) this.emitGame({ player, kind: 'feint', t, pad: true });

@@ -4,11 +4,14 @@ export interface KeyBindings {
   prompt: string[]; // 6 KeyboardEvent.code values
   heal: string;
   feint: string;
+  /** WHEEL draw action key. */
+  action: string;
 }
 export interface PadBindings {
   prompt: number[]; // 6 standard-mapping button indices
   heal: number;
   feint: number;
+  action: number;
 }
 
 export interface Settings {
@@ -24,12 +27,12 @@ export interface Settings {
 }
 
 export const DEFAULT_KEYS: [KeyBindings, KeyBindings] = [
-  { prompt: ['KeyQ', 'KeyW', 'KeyE', 'KeyA', 'KeyS', 'KeyD'], heal: 'KeyZ', feint: 'KeyX' },
-  { prompt: ['KeyU', 'KeyI', 'KeyO', 'KeyJ', 'KeyK', 'KeyL'], heal: 'KeyM', feint: 'Comma' },
+  { prompt: ['KeyQ', 'KeyW', 'KeyE', 'KeyA', 'KeyS', 'KeyD'], heal: 'KeyZ', feint: 'KeyX', action: 'Space' },
+  { prompt: ['KeyU', 'KeyI', 'KeyO', 'KeyJ', 'KeyK', 'KeyL'], heal: 'KeyM', feint: 'Comma', action: 'Enter' },
 ];
 export const DEFAULT_PADS: [PadBindings, PadBindings] = [
-  { prompt: [0, 1, 2, 3, 4, 5], heal: 6, feint: 7 },
-  { prompt: [0, 1, 2, 3, 4, 5], heal: 6, feint: 7 },
+  { prompt: [0, 1, 2, 3, 4, 5], heal: 6, feint: 7, action: 0 },
+  { prompt: [0, 1, 2, 3, 4, 5], heal: 6, feint: 7, action: 0 },
 ];
 
 export function defaultSettings(): Settings {
@@ -78,10 +81,13 @@ export function saveSettings(s: Settings): void {
 function validKeys(k: unknown): [KeyBindings, KeyBindings] | null {
   if (!Array.isArray(k) || k.length !== 2) return null;
   for (const b of k) if (!b || !Array.isArray(b.prompt) || b.prompt.length !== 6 || !b.heal || !b.feint) return null;
+  // older saves have no action key
+  k.forEach((b: KeyBindings, i: number) => { if (!b.action) b.action = DEFAULT_KEYS[i].action; });
   return k as [KeyBindings, KeyBindings];
 }
 function validPads(k: unknown): [PadBindings, PadBindings] | null {
   if (!Array.isArray(k) || k.length !== 2) return null;
   for (const b of k) if (!b || !Array.isArray(b.prompt) || b.prompt.length !== 6) return null;
+  k.forEach((b: PadBindings, i: number) => { if (typeof b.action !== 'number') b.action = DEFAULT_PADS[i].action; });
   return k as [PadBindings, PadBindings];
 }
