@@ -62,3 +62,16 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - CPU = simulated human. Reaction ~N(380,90) easy, N(290,70) normal, N(230,50) hard, never under 180ms. Aim error on TIME IT / WHEEL / RING-gold, occasional misses and fake-outs. It only reacts to things already on screen (prompt appeared, LET GO cue, bell, the visible arc). Hard sometimes aims for the RING gold band.
 - `tests/fairness.test.ts`: two identical bots, 1000 seeds per prompt type and per draw type. Each seed is played twice with the bots' dice swapped between seats, so any edge can only come from the seat; P1 must win 50% ±3% (it does: exactly 50% when the rules are symmetric). Also CPU Normal vs a 290ms human on RING draws ≈ 50% ±3%. Fake-outs are a separate skill and are tested separately.
 - Online: the guest starts each exchange `lead − RTT/2` after receiving the plan (RTT from ping/pong), so both clients start the prompts on the same frame, give or take jitter.
+
+**6. Touch.**
+- Before each mode, TOUCH is a third choice; phones and tablets start on it. In Local Versus, both players can pick TOUCH to share one phone in split screen: left half P1, right half P2, whose prompts are turned 180° and whose swipes are flipped for the player across the table.
+- Gestures (`src/ui/touch.ts`):
+  - swipe = direction; tap = ACTION.
+  - MASH / TIME IT / RELEASE use taps on the prompt's button.
+  - HOLD = press and hold (swipe and hold for a direction); SEQUENCE = a swipe chain, one stroke or several.
+  - STEADY = drag to keep a drifting marker in the gold zone; leaving it is the flinch. Drag only, no tilt: tilt needs a permission prompt on iOS.
+  - Heal = swipe down and hold; feint = swipe up in the standoff; a still tap in the standoff is an early draw.
+- Each touch prompt shows the gesture under the tile. Phones buzz on success and on misses where `navigator.vibrate` exists (not iOS Safari).
+- Fairness: touch times are moved back 35ms (`CONFIG.touch.latencyMs`). Gestures are recognised by context, so inside a prompt a touch is never ambiguous. In READY and the standoff the layer waits to see whether a touch is a tap or a swipe, and back-dates a tap to touch-down. Online, the "known up to" heartbeat never passes an unread touch, so a late-recognised gesture can't change a decided result.
+- Scroll, zoom, pull-to-refresh and text selection are blocked during play (`html.touch-play`). A small II button pauses.
+- Gesture logic is tested in `tests/touch.test.ts` with simulated pointer events (happy-dom). Browser bots proved unreliable for timing because the test tab gets throttled in the background.

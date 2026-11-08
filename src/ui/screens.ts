@@ -252,9 +252,11 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
       setTimeout(() => done(cur.map((c) => ROSTER[c])), 450);
     }
   };
+  // tap / click a card: picks for the first player still choosing (touch and mouse)
   cards.forEach((card, ci) => card.addEventListener('click', () => {
-    if (opts.pickers.length !== 1) return;
-    cur[0] = ci; paint(); lock(0);
+    const pi = locked.findIndex((l) => !l);
+    if (pi < 0 || finished) return;
+    cur[pi] = ci; paint(); lock(pi);
   }));
   const offs: (() => void)[] = [];
   if (opts.pickers.length === 2) {

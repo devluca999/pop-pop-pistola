@@ -11,6 +11,7 @@ import type { Device } from '../settings';
 import { h, tile, shout, heartSvg, clear } from '../ui/dom';
 import { pixelText } from '../ui/pixelfont';
 import { PromptView, DrawView } from '../ui/promptview';
+import { TouchControls, intentFor, gestureText, type Intent } from '../ui/touch';
 import type { AppCtx } from './ctx';
 import type { NetLink, NetMsg } from '../net/types';
 import type { SfxName } from '../audio';
@@ -85,6 +86,9 @@ export class Duel {
   private flash = 0;
   private disposed = false;
   private zoneEls: [HTMLElement | null, HTMLElement | null] = [null, null];
+  /** Touch layer, when anyone at this screen plays by touch. */
+  private touch: TouchControls | null = null;
+  private lastFrame = 0;
 
   constructor(private ctx: AppCtx, private setup: DuelSetup, private onExit: (e: DuelExit) => void) {
     this.state = newMatch(setup.characters[0], setup.characters[1]);
@@ -115,6 +119,17 @@ export class Duel {
       // Heartbeats run on a timer, not the render loop, so a backgrounded tab keeps talking.
       const iv = window.setInterval(() => this.netTick(performance.now()), 50);
       this.unsub.push(() => clearInterval(iv));
+    }
+
+    // touch players: gestures instead of keys (split screen when two share one phone)
+    const touchPlayers = ([0, 1] as PlayerIndex[]).filter((i) => this.isLocalHuman(i) && this.device(i) === 'touch');
+    if (touchPlayers.length) {
+      this.touch = new TouchControls(this.root, ctx.input, touchPlayers, (p) => (this.side(p) === 'near' ? 'left' : 'right'));
+      this.root.insertBefore(this.touch.el, this.top);
+      this.touch.setChoiceHandler((p, b) => { if (this.phase === 'choice' && p === this.choiceFor) this.resolveChoice(b === BTN.right ? 'heal' : 'vaporize'); });
+      const pause = h('button', { class: 'touch-pause', 'aria-label': 'Pause' }, 'II');
+      pause.addEventListener('click', () => this.togglePause());
+      this.top.append(pause);
     }
 
     ctx.audio.music('duel');
@@ -178,7 +193,9 @@ export class Duel {
     const existing = this.zoneEls[i];
     if (existing && existing.isConnected) return existing;
     const left = this.side(i) === 'near';
-    const zone = h('div', { class: `prompt-zone ${left ? 'left' : 'right'}` });
+    // one phone, two players: the right-hand player sits across the table
+    const flip = !left && this.setup.mode === 'local' && this.device(i) === 'touch' && this.device(0) === 'touch';
+    const zone = h('div', { class: `prompt-zone ${left ? 'left' : 'right'} ${flip ? 'flip' : ''}` });
     this.zones.append(zone);
     this.zoneEls[i] = zone;
     return zone;
@@ -320,6 +337,11 @@ export class Duel {
     if (this.disposed) return;
     this.ctx.input.poll();
     for (const t of [...this.timers]) if (now >= t.at) { this.timers.splice(this.timers.indexOf(t), 1); t.fn(); }
+    if (this.touch) {
+      this.touch.frame(this.lastFrame ? Math.min(50, now - this.lastFrame) : 16, now);
+      this.lastFrame = now;
+      this.updateTouchIntents(now);
+    }
     this.updateWash();
     if (this.phase === 'paused') return;
     const run = this.run;
@@ -341,6 +363,33 @@ export class Duel {
     run.res = res;
     this.present(run, res, t);
     if (res.done && res.outcome) this.outcome(run, res);
+  }
+
+  /** Tell the touch layer what each touch player is being asked for right now. */
+  private updateTouchIntents(now: number) {
+    const touch = this.touch!;
+    for (const i of [0, 1] as PlayerIndex[]) {
+      if (!this.isLocalHuman(i) || this.device(i) !== 'touch') continue;
+      touch.setIntent(i, this.intentNow(i, now));
+    }
+  }
+  private intentNow(i: PlayerIndex, now: number): Intent {
+    if (this.phase === 'choice') return i === this.choiceFor ? { kind: 'choice' } : { kind: 'idle' };
+    const run = this.run;
+    if (!run || this.phase !== 'exchange') return { kind: 'idle' };
+    const t = now - run.t0;
+    const plan = run.plan;
+    if (t < 0) return { kind: 'idle' };
+    if (t < CONFIG.readyMs) return canHeal(this.state.players[i]) ? { kind: 'mixed', swipes: [BTN.down] } : { kind: 'idle' };
+    for (const p of plan.prompts) {
+      if (t >= p.t && t < p.end) {
+        if (p.type === 'steady') return { kind: 'steady', until: run.t0 + p.end };
+        return intentFor(p.type, p.keys);
+      }
+    }
+    if (t >= plan.standoffStart && t < plan.bellT) return { kind: 'mixed', swipes: [BTN.up] };
+    if (t >= plan.bellT) return { kind: 'tap', key: BTN.action };
+    return { kind: 'idle' };
   }
 
   // ------------------------------------------------------------ presentation during the exchange
@@ -406,6 +455,7 @@ export class Duel {
             frame: this.frameOf(i),
             tag: this.tagOf(i),
             arcMs: p.arcMs,
+            gesture: this.isLocalHuman(i) && this.device(i) === 'touch' ? gestureText(p.type, p.keys) : undefined,
             cueMs: p.cueMs,
           });
         }
@@ -450,11 +500,13 @@ export class Duel {
         if (r.status === 'ok') {
           this.once(run, `ok${k}${i}`, () => {
             v.result('ok');
+            if (this.isLocalHuman(i) && this.device(i) === 'touch') this.touch?.haptic('good');
             if (this.isLocalHuman(i)) audio.sfx(p.type === 'release' ? 'releasePop' : 'promptGood', { pan: this.pan(i) });
           });
         } else if (r.status !== 'pending') {
           this.once(run, `bad${k}${i}`, () => {
             v.result(r.status);
+            if (this.isLocalHuman(i) && this.device(i) === 'touch') this.touch?.haptic('bad');
             audio.sfx('flinch', { pan: this.pan(i) });
             stage.setPose(this.side(i), 'flinch');
           });
@@ -906,7 +958,9 @@ export class Duel {
     const net = this.setup.net!;
     if (run && this.phase === 'exchange' && now - run.lastUpSent > 80) {
       run.lastUpSent = now;
-      net.send({ type: 'upto', ex: run.ex, t: now - run.t0 });
+      // an unread touch could still land earlier: never claim past it
+      const known = this.touch ? this.touch.safeTime(now) : now;
+      net.send({ type: 'upto', ex: run.ex, t: known - run.t0 });
     }
     if (now - this.lastPing > 500) { this.lastPing = now; net.send({ type: 'ping', at: now }); }
     const silent = now - this.lastRemoteHeard;
@@ -1000,6 +1054,8 @@ export class Duel {
     this.ctx.input.twoPlayers = true;
     this.ctx.input.soloPlayer = 0;
     this.ctx.input.padGameMode = false;
+    this.touch?.dispose();
+    this.touch = null;
     this.ctx.audio.heartbeat(false);
     this.ctx.stage.setPost({ washLeft: 0, washRight: 0, flash: 0 });
     this.root.remove();

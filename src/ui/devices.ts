@@ -4,9 +4,11 @@ import type { Device } from '../settings';
 import { keyLabel } from '../input/labels';
 import { BTN } from '../rules/config';
 import { h } from './dom';
+import { isTouchDevice } from './touch';
 import { navMenu, type ScreenHandle } from './screens';
 
 const ICON_KEYS = '<svg viewBox="0 0 16 9" shape-rendering="crispEdges"><path d="M0 0h16v9H0z" fill="currentColor"/><path d="M1 1h2v2H1zm3 0h2v2H4zm3 0h2v2H7zm3 0h2v2h-2zm3 0h2v2h-2zM2 4h2v2H2zm3 0h2v2H5zm3 0h2v2H8zm3 0h2v2h-2zM4 7h8v1H4z" fill="#1d140e"/></svg>';
+const ICON_TOUCH = '<svg viewBox="0 0 16 9" shape-rendering="crispEdges"><path d="M5 0h6v9H5z" fill="currentColor"/><path d="M6 1h4v6H6z" fill="#1d140e"/><path d="M8 3h1v3h1v1h1v2H7V7H6V6h2z" fill="currentColor"/></svg>';
 const ICON_PAD = '<svg viewBox="0 0 16 9" shape-rendering="crispEdges"><path d="M2 1h12v1h1v4h1v3h-4V7H4v2H0V6h1V2h1z" fill="currentColor"/><path d="M3 3h1V2h1v1h1v1H5v1H4V4H3zm8 0h1v1h-1zm2 0h1v1h-1zm-1-1h1v1h-1zm0 2h1v1h-1z" fill="#1d140e"/></svg>';
 
 function padsConnected(): number {
@@ -15,8 +17,8 @@ function padsConnected(): number {
 }
 
 /**
- * One player (CPU / online): pick KEYBOARD or GAMEPAD from a menu.
- * Pads route by order again (pad 1 is you).
+ * One player (CPU / online): pick KEYBOARD, GAMEPAD or TOUCH from a menu.
+ * Pads route by order again (pad 1 is you). Phones and tablets start on TOUCH.
  */
 export function deviceSelectSolo(ctx: AppCtx, done: (d: Device) => void, back: () => void): ScreenHandle {
   const mk = (d: Device, label: string, icon: string) => {
@@ -26,6 +28,7 @@ export function deviceSelectSolo(ctx: AppCtx, done: (d: Device) => void, back: (
   };
   const kb = mk('keyboard', 'KEYBOARD', ICON_KEYS);
   const gp = mk('gamepad', 'GAMEPAD', ICON_PAD);
+  const tc = mk('touch', 'TOUCH', ICON_TOUCH);
   const note = h('div', { class: 'status-line' });
   const paint = () => {
     const n = padsConnected();
@@ -43,15 +46,15 @@ export function deviceSelectSolo(ctx: AppCtx, done: (d: Device) => void, back: (
     done(d);
   };
   const remembered = ctx.settings.devices[0];
-  const start = remembered === 'gamepad' ? 1 : 0;
+  const start = isTouchDevice() && remembered !== 'gamepad' ? 2 : remembered === 'gamepad' ? 1 : remembered === 'touch' ? 2 : 0;
   const el = h('div', { class: 'screen dim' },
     h('div', { class: 'title-label' }, 'HOW ARE YOU PLAYING?'),
-    h('div', { class: 'menu dev-menu' }, kb, gp),
+    h('div', { class: 'menu dev-menu' }, kb, gp, tc),
     note,
     h('div', { class: 'hint' }, 'PROMPTS WILL SHOW THIS DEVICE\'S BUTTONS · ESC / B BACK'),
   );
   ctx.ui.append(el);
-  const offs = [navMenu(ctx, [kb, gp], back, start), () => clearInterval(iv)];
+  const offs = [navMenu(ctx, [kb, gp, tc], back, start), () => clearInterval(iv)];
   return { dispose: () => { offs.forEach((o) => o()); el.remove(); } };
 }
 
@@ -70,10 +73,12 @@ export function deviceSelectLocal(ctx: AppCtx, done: (d: [Device, Device]) => vo
   const cols = ([0, 1] as PlayerIndex[]).map((p) => {
     const kbRow = h('div', { class: 'dev-opt' });
     const gpRow = h('div', { class: 'dev-opt' });
+    const tcRow = h('div', { class: 'dev-opt' });
     const state = h('div', { class: 'dev-state' });
-    const col = h('div', { class: `dev-col p${p + 1}` }, h('div', { class: 'dev-head' }, `PLAYER ${p + 1}`), kbRow, gpRow, state);
+    const col = h('div', { class: `dev-col p${p + 1}` }, h('div', { class: 'dev-head' }, `PLAYER ${p + 1}`), kbRow, gpRow, tcRow, state);
     kbRow.addEventListener('click', () => setKeyboard(p));
-    return { col, kbRow, gpRow, state };
+    tcRow.addEventListener('click', () => setTouch(p));
+    return { col, kbRow, gpRow, tcRow, state };
   });
 
   const paint = () => {
@@ -84,9 +89,12 @@ export function deviceSelectLocal(ctx: AppCtx, done: (d: [Device, Device]) => vo
       c.gpRow.innerHTML = `<span class="dev-ico">${ICON_PAD}</span>GAMEPAD<span class="kc">A</span>`;
       c.kbRow.classList.toggle('on', ch === 'keyboard');
       c.gpRow.classList.toggle('on', ch === 'gamepad');
+      c.tcRow.innerHTML = `<span class="dev-ico">${ICON_TOUCH}</span>TOUCH<span class="kc">TAP</span>`;
+      c.tcRow.classList.toggle('on', ch === 'touch');
       c.col.classList.toggle('locked', ch !== null);
       c.state.textContent = ch === 'keyboard' ? 'KEYBOARD ✓'
         : ch === 'gamepad' ? `GAMEPAD ${padOf[p]! + 1} ✓`
+        : ch === 'touch' ? 'TOUCH ✓ (YOUR HALF OF THE SCREEN)'
         : `PRESS ${lockKey(p as PlayerIndex)} OR A ON A PAD`;
     });
     padNote.textContent = n ? `${n} GAMEPAD${n > 1 ? 'S' : ''} FOUND` : 'NO GAMEPAD SEEN YET · PRESS ANY BUTTON ON ONE';
@@ -109,6 +117,12 @@ export function deviceSelectLocal(ctx: AppCtx, done: (d: [Device, Device]) => vo
     if (finished) return;
     if (choice[p] === 'keyboard') { choice[p] = null; ctx.audio.sfx('uiBack'); }
     else { padOf[p] = null; choice[p] = 'keyboard'; ctx.audio.sfx('uiSelect'); }
+    check();
+  };
+  const setTouch = (p: PlayerIndex) => {
+    if (finished) return;
+    if (choice[p] === 'touch') { choice[p] = null; ctx.audio.sfx('uiBack'); }
+    else { padOf[p] = null; choice[p] = 'touch'; ctx.audio.sfx('uiSelect'); }
     check();
   };
   const owner = (gi: number): PlayerIndex | null => (padOf[0] === gi ? 0 : padOf[1] === gi ? 1 : null);

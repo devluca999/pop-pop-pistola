@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@types/three": "0.187.0",
+    "happy-dom": "20.14.6",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vitest": "4.1.12"

@@ -127,6 +127,17 @@ export const CONFIG = {
   cpuMinReactMs: 180,
   cpuWillFocusMs: 35,
 
+  /**
+   * Touch: tuned so a phone is as fair as a keyboard. Touch screens report input later,
+   * so touch times are moved back by latencyMs.
+   */
+  touch: {
+    latencyMs: 35,
+    swipeFrac: 0.06,           // a swipe = moving 6% of the screen's short side
+    steadyDrift: 0.6,          // STEADY marker drift (half-widths per second)
+    steadySafe: 0.6,           // marker must stay within this of the centre
+  },
+
   // Presentation
   aftermathMs: 1500,           // RESULT beat: freeze, damage
   resetMessageMs: 1500,
