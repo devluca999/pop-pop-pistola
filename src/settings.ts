@@ -1,5 +1,8 @@
 import type { FilterMode } from './types';
 
+/** What a player holds. Prompts show that device's buttons. */
+export type Device = 'keyboard' | 'gamepad';
+
 export interface KeyBindings {
   prompt: string[]; // 6 KeyboardEvent.code values
   heal: string;
@@ -17,6 +20,8 @@ export interface PadBindings {
 export interface Settings {
   keys: [KeyBindings, KeyBindings];
   pads: [PadBindings, PadBindings];
+  /** Last controller choice per player (P1, P2), remembered for the next match. */
+  devices: [Device, Device];
   filter: FilterMode;
   crt: boolean;
   dither: number;
@@ -39,6 +44,7 @@ export function defaultSettings(): Settings {
   return {
     keys: structuredClone(DEFAULT_KEYS),
     pads: structuredClone(DEFAULT_PADS),
+    devices: ['keyboard', 'keyboard'],
     filter: 'color',
     crt: false,
     dither: 1,
@@ -62,6 +68,7 @@ export function loadSettings(): Settings {
       ...s,
       keys: validKeys(s.keys) ?? d.keys,
       pads: validPads(s.pads) ?? d.pads,
+      devices: validDevices(s.devices) ?? d.devices,
       volume: { ...d.volume, ...(s.volume ?? {}) },
       dither: Math.min(1, Math.max(0.35, Number(s.dither ?? d.dither) || d.dither)),
     };
@@ -90,4 +97,9 @@ function validPads(k: unknown): [PadBindings, PadBindings] | null {
   for (const b of k) if (!b || !Array.isArray(b.prompt) || b.prompt.length !== 6) return null;
   k.forEach((b: PadBindings, i: number) => { if (typeof b.action !== 'number') b.action = DEFAULT_PADS[i].action; });
   return k as [PadBindings, PadBindings];
+}
+
+function validDevices(v: unknown): [Device, Device] | null {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  return v.every((x) => x === 'keyboard' || x === 'gamepad') ? (v as [Device, Device]) : null;
 }

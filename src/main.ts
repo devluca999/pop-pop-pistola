@@ -11,7 +11,9 @@ import {
   titleScreen, mainMenu, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle,
 } from './ui/screens';
 import { h } from './ui/dom';
-import { keyLabel } from './input/labels';
+import { bindingLabels } from './input/labels';
+import { deviceSelectSolo, deviceSelectLocal } from './ui/devices';
+import type { Device } from './settings';
 import { onlineConfigured, openRoom, makeRoomCode, normalizeCode, type Room } from './net/online';
 import type { NetMsg } from './net/types';
 
@@ -64,28 +66,31 @@ function toMenu() {
   duel?.dispose();
   duel = null;
   show(mainMenu(ctx, {
-    cpu: () => { menuIndex = 0; toDifficulty(); },
-    local: () => { menuIndex = 1; toLocalSelect(); },
-    online: () => { menuIndex = 2; toOnline(); },
+    cpu: () => { menuIndex = 0; show(deviceSelectSolo(ctx, (d) => { devices = [d, d]; toDifficulty(); }, toMenu)); },
+    local: () => { menuIndex = 1; show(deviceSelectLocal(ctx, (d) => { devices = d; toLocalSelect(); }, toMenu)); },
+    online: () => { menuIndex = 2; show(deviceSelectSolo(ctx, (d) => { devices = [d, d]; toOnline(); }, toMenu)); },
     settings: () => { menuIndex = 3; show(settingsScreen(ctx, toMenu)); },
     howto: () => { menuIndex = 4; show(howTo(ctx, toMenu)); },
   }, menuIndex));
 }
+
+/** Controllers picked on the controller screen (by player index). */
+let devices: [Device, Device] = ['keyboard', 'keyboard'];
 
 function toDifficulty() {
   show(difficultyMenu(ctx, (d) => toCpuSelect(d), toMenu));
 }
 
 function toCpuSelect(d: Difficulty) {
-  show(charSelect(ctx, { pickers: [0] }, ([mine]) => {
+  show(charSelect(ctx, { pickers: [0], devices }, ([mine]) => {
     const cpu = ROSTER[Math.floor(Math.random() * ROSTER.length)];
-    startDuel({ mode: 'cpu', characters: [mine, cpu], difficulty: d, localView: 0 }, () => toCpuSelect(d));
+    startDuel({ mode: 'cpu', characters: [mine, cpu], difficulty: d, localView: 0, devices }, () => toCpuSelect(d));
   }, toDifficulty));
 }
 
 function toLocalSelect() {
-  show(charSelect(ctx, { pickers: [0, 1] }, ([a, b]) => {
-    startDuel({ mode: 'local', characters: [a, b], localView: 0 }, toLocalSelect);
+  show(charSelect(ctx, { pickers: [0, 1], devices }, ([a, b]) => {
+    startDuel({ mode: 'local', characters: [a, b], localView: 0, devices }, toLocalSelect);
   }, toMenu));
 }
 
@@ -179,7 +184,7 @@ function onlineSelect(room: Room) {
   let mine: CharacterId | null = null;
   let theirs: CharacterId | null = null;
   let theirLabels: string[] | undefined;
-  const myLabels = () => settings.keys[0].prompt.map(keyLabel);
+  const myLabels = () => bindingLabels(settings, 0, devices[0]).prompt;
   let started = false;
   const offs: (() => void)[] = [];
   const statusText = () => (theirs ? 'RIVAL LOCKED' : 'RIVAL CHOOSING...');
@@ -194,7 +199,7 @@ function onlineSelect(room: Room) {
     started = true;
     offs.forEach((o) => o());
     startDuel(
-      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', remoteLabels: theirLabels },
+      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', remoteLabels: theirLabels, devices },
       () => onlineSelect(room),
       () => { room.leave(); toMenu(); },
     );
@@ -207,7 +212,7 @@ function onlineSelect(room: Room) {
   offs.push(room.onStatus((s) => {
     if (s === 'lost' && !started) { offs.forEach((o) => o()); toast('CONNECTION LOST'); room.leave(); toOnline(); }
   }));
-  const sel = charSelect(ctx, { pickers: [0], title: `ONLINE · ${room.code}`, status: statusText }, ([c]) => {
+  const sel = charSelect(ctx, { pickers: [0], devices, title: `ONLINE · ${room.code}`, status: statusText }, ([c]) => {
     mine = c;
     room.send({ type: 'pick', character: c, labels: myLabels() });
     tryStart();

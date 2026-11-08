@@ -19,6 +19,7 @@ export class Input {
   private menuL: Listener<MenuInput>[] = [];
   private rawL: Listener<KeyboardEvent>[] = [];
   private padRawL: Listener<{ pad: number; button: number }>[] = [];
+  private padBtnL: Listener<{ pad: number; button: number }>[] = [];
   private padPrev: boolean[][] = [];
   private padAxisPrev: string[] = [];
   private held = new Set<string>();
@@ -26,6 +27,11 @@ export class Input {
   twoPlayers = true;
   /** Online/CPU: the human plays as this player index. */
   soloPlayer: PlayerIndex = 0;
+  /**
+   * Which player each gamepad belongs to (index = pad slot). null = by order (pad 1 → P1,
+   * the rest → P2). Set by the controller screen; a pad missing from the list drives no one.
+   */
+  padPlayers: (PlayerIndex | null)[] | null = null;
 
   constructor(private settings: () => Settings) {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -38,6 +44,13 @@ export class Input {
   /** Raw key capture (rebinding UI). Return value of listener ignored. */
   onRawKey(f: Listener<KeyboardEvent>) { this.rawL.push(f); return () => { this.rawL = this.rawL.filter((x) => x !== f); }; }
   onRawPad(f: Listener<{ pad: number; button: number }>) { this.padRawL.push(f); return () => { this.padRawL = this.padRawL.filter((x) => x !== f); }; }
+  /** Every pad button press with the pad it came from. Unlike onRawPad it doesn't swallow game/menu events. */
+  onPadButton(f: Listener<{ pad: number; button: number }>) { this.padBtnL.push(f); return () => { this.padBtnL = this.padBtnL.filter((x) => x !== f); }; }
+  /** The player a pad drives, or null. */
+  playerForPad(gi: number): PlayerIndex | null {
+    if (this.padPlayers) return this.padPlayers[gi] ?? null;
+    return gi === 0 ? 0 : 1;
+  }
 
   /**
    * Listener snapshot for the event being handled. One key can produce a game event and a
@@ -100,13 +113,21 @@ export class Input {
       const prev = this.padPrev[gi] ?? [];
       const now = gp.buttons.map((b) => b.pressed || b.value > 0.5);
       const t = performance.now();
-      const player: PlayerIndex = gi === 0 ? 0 : 1;
+      const owner = this.playerForPad(gi);
+      const player: PlayerIndex = owner ?? 0;
       const b = s.pads[player];
       for (let bi = 0; bi < now.length; bi++) {
         if (now[bi] === !!prev[bi]) continue;
         const down = now[bi];
         if (down) for (const f of [...this.padRawL]) f({ pad: gi, button: bi });
         if (this.padRawL.length) continue;
+        if (down) for (const f of [...this.padBtnL]) if (this.padBtnL.includes(f)) f({ pad: gi, button: bi });
+        if (owner === null) {
+          // an unassigned pad can still drive menus
+          const m = down ? padMenu(bi) : null;
+          if (m) this.emitMenu(m);
+          continue;
+        }
         const slot = b.prompt.indexOf(bi);
         // the action button can share a prompt button (A): it then fires both
         if (down && bi === b.action) this.emitGame({ player, kind: 'action', t, pad: true });
@@ -114,8 +135,7 @@ export class Input {
         else if (down && bi === b.heal) this.emitGame({ player, kind: 'heal', t, pad: true });
         else if (down && bi === b.feint) this.emitGame({ player, kind: 'feint', t, pad: true });
         if (down) {
-          const m: MenuInput | null = bi === 12 ? 'up' : bi === 13 ? 'down' : bi === 14 ? 'left' : bi === 15 ? 'right'
-            : bi === 0 || bi === 9 ? 'confirm' : bi === 1 || bi === 8 ? 'back' : null;
+          const m = padMenu(bi);
           if (m) this.emitMenu(m);
         }
       }
@@ -132,6 +152,11 @@ export class Input {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     return Array.from(pads).filter(Boolean).length;
   }
+}
+
+function padMenu(bi: number): MenuInput | null {
+  return bi === 12 ? 'up' : bi === 13 ? 'down' : bi === 14 ? 'left' : bi === 15 ? 'right'
+    : bi === 0 || bi === 9 ? 'confirm' : bi === 1 || bi === 8 ? 'back' : null;
 }
 
 function menuForKey(code: string): MenuInput | null {

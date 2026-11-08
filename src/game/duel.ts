@@ -6,7 +6,8 @@ import {
   type PromptType, type DrawType,
 } from '../rules';
 import type { GameInput } from '../input';
-import { keyLabel, padLabel } from '../input/labels';
+import { keyLabel, bindingLabels } from '../input/labels';
+import type { Device } from '../settings';
 import { h, tile, shout, heartSvg, clear } from '../ui/dom';
 import { pixelText } from '../ui/pixelfont';
 import { PromptView, DrawView } from '../ui/promptview';
@@ -26,6 +27,8 @@ export interface DuelSetup {
   isHost?: boolean;
   /** Online: the rival's key labels (for look-alike avoidance and their own display). */
   remoteLabels?: string[];
+  /** Controller each player chose (by player index). Prompts show that device's buttons. */
+  devices?: [Device, Device];
 }
 
 export type DuelExit = { kind: 'menu' } | { kind: 'rematch' };
@@ -71,7 +74,6 @@ export class Duel {
   private top: HTMLElement;
   private timers: { at: number; fn: () => void }[] = [];
   private unsub: (() => void)[] = [];
-  private lastDevicePad: [boolean, boolean] = [false, false];
   private willChoice: WillChoice | null = null;
   private choiceDeadline = 0;
   private pausedAt = 0;
@@ -135,27 +137,18 @@ export class Duel {
   labelsFor(i: PlayerIndex): string[] {
     if (this.isCpu(i)) return this.ctx.settings.keys[1].prompt.map(keyLabel);
     if (!this.isLocalHuman(i)) return this.setup.remoteLabels ?? ['1', '2', '3', '4', '5', '6'];
-    const b = this.bindingIndex(i);
-    return this.lastDevicePad[i]
-      ? this.ctx.settings.pads[b].prompt.map(padLabel)
-      : this.ctx.settings.keys[b].prompt.map(keyLabel);
+    return this.myLabels(i).prompt;
   }
+  /** Button labels on the device this player chose on the controller screen. */
+  private myLabels(i: PlayerIndex) { return bindingLabels(this.ctx.settings, this.bindingIndex(i), this.device(i)); }
+  private device(i: PlayerIndex): Device { return this.setup.devices?.[i] ?? 'keyboard'; }
   private keyFor(i: PlayerIndex, slot: number): string { return this.labelsFor(i)[slot] ?? '?'; }
-  private healKey(i: PlayerIndex): string {
-    const b = this.bindingIndex(i);
-    return this.lastDevicePad[i] ? padLabel(this.ctx.settings.pads[b].heal) : keyLabel(this.ctx.settings.keys[b].heal);
-  }
-  private feintKey(i: PlayerIndex): string {
-    const b = this.bindingIndex(i);
-    return this.lastDevicePad[i] ? padLabel(this.ctx.settings.pads[b].feint) : keyLabel(this.ctx.settings.keys[b].feint);
-  }
+  private healKey(i: PlayerIndex): string { return this.myLabels(i).heal; }
+  private feintKey(i: PlayerIndex): string { return this.myLabels(i).feint; }
   private actionKey(i: PlayerIndex): string {
     if (this.isCpu(i)) return 'ENTER';
     if (!this.isLocalHuman(i)) return 'GO';
-    const b = this.bindingIndex(i);
-    if (this.lastDevicePad[i]) return padLabel(this.ctx.settings.pads[b].action);
-    const code = this.ctx.settings.keys[b].action;
-    return code === 'Space' ? 'SPACE' : code === 'Enter' ? 'ENTER' : keyLabel(code);
+    return this.myLabels(i).action;
   }
 
   private banner(text: string, ms = 1200, cls = '') {
@@ -562,7 +555,6 @@ export class Duel {
   private onInput(e: GameInput) {
     const i = e.player;
     if (!this.isLocalHuman(i)) return;
-    this.lastDevicePad[i] = e.pad;
     if (this.phase === 'choice') { this.choiceInput(i, e); return; }
     const run = this.run;
     if (!run || this.phase !== 'exchange') return;

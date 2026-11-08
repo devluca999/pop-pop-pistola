@@ -1,7 +1,8 @@
 import type { CharacterId, FilterMode, PlayerIndex } from '../types';
 import type { AppCtx } from '../game/ctx';
 import type { MenuInput, GameInput } from '../input';
-import { keyLabel, padLabel } from '../input/labels';
+import { keyLabel, padLabel, bindingLabels } from '../input/labels';
+import type { Device } from '../settings';
 import { DEFAULT_KEYS, DEFAULT_PADS } from '../settings';
 import { DITHER_MIN } from '../render/post';
 import { h, shout, clear } from './dom';
@@ -95,6 +96,43 @@ const BLURB: Record<CharacterId, string> = {
   dusty: 'SAWED-OFF. 150MS SLOWER. HIT 2, PERFECT 3. WINS TRADES. CIGAR HEALS (X2).',
   mercy: 'LANTERN FLASH BLINDS, NO DAMAGE. 2 BLINDS IN A ROW = WILL OF GOD. CAN FEINT.',
 };
+/** Skill sheet for the character select panel. {H} / {F} become the player's heal / feint button. */
+const SKILLS: Record<CharacterId, { role: string; rows: [string, string][] }> = {
+  hector: {
+    role: 'THE ALL-ROUNDER',
+    rows: [
+      ['REVOLVER', 'Fastest draw. A hit deals 1 heart, a perfect draw 2.'],
+      ['WHISKEY {H}', 'Heals 1 heart, twice per match. Press it during READY. He gets drunk: that exchange his prompts wobble and he starts with 2 flinches.'],
+      ['FEINT {F}', 'During the standoff. If the rival twitches within half a second, they get 2 flinches. If not, you get 1.'],
+    ],
+  },
+  dusty: {
+    role: 'THE HEAVY HITTER',
+    rows: [
+      ['SAWED-OFF', 'Draws 150ms slower, but a hit deals 2 hearts and a perfect draw 3.'],
+      ['WINS TRADES', 'If you both shoot at once, he deals 2 and only takes 1.'],
+      ['CIGAR {H}', 'Heals 1 heart, twice per match. That exchange he never wins a stare-down race.'],
+      ['SMOKE', 'His shot or his cigar half-hides his rival\'s prompts for 1 round.'],
+    ],
+  },
+  mercy: {
+    role: 'THE TRICKSTER',
+    rows: [
+      ['LANTERN', 'Her draw does no damage. It blinds: the rival starts the next exchange with 2 flinches. She also wins trades outright.'],
+      ['WILL OF GOD', 'Blind twice without getting hit and her next winning draw lets her choose: VAPORIZE (instant win) or FULL HEAL (once per match).'],
+      ['FEINT {F}', 'Same as Hector: fake a draw to make the rival twitch.'],
+      ['NO HEALS', 'She can only heal through Will of God.'],
+    ],
+  },
+};
+
+function skillSheet(c: CharacterId, heal: string, feint: string): string {
+  const kc = (x: string) => `<span class="kc">${x}</span>`;
+  const sk = SKILLS[c];
+  const rows = sk.rows.map(([k, v]) => `<div class="sk-row"><b>${k.replace('{H}', kc(heal)).replace('{F}', kc(feint))}</b><span>${v}</span></div>`).join('');
+  return `<div class="sk-name">${DISPLAY[c]} <i>${sk.role}</i></div>${rows}<div class="sk-row sk-all"><b>LAST STAND</b><span>Everyone: at 1 heart your perfect window gets wider.</span></div>`;
+}
+
 const DISPLAY: Record<CharacterId, string> = { hector: 'BIG HAT HECTOR', dusty: "LIL' DUSTY", mercy: "SISTER SMOKIN' MERCY" };
 
 export function portraitSvg(c: CharacterId): string {
@@ -140,6 +178,8 @@ export interface CharSelectOpts {
   title?: string;
   /** Online: show a status line under the cards. */
   status?: () => string;
+  /** Controllers by player index, for the button hints. */
+  devices?: [Device, Device];
 }
 
 /**
@@ -161,12 +201,19 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
   const status = h('div', { class: 'status-line' });
   const help = h('div', { class: 'hint' });
   const k = ctx.settings.keys;
-  if (opts.pickers.length === 2) {
-    help.textContent = `P1: ${keyLabel(k[0].prompt[3])} / ${keyLabel(k[0].prompt[5])} MOVE, ${keyLabel(k[0].prompt[4])} LOCK   ·   P2: ${keyLabel(k[1].prompt[3])} / ${keyLabel(k[1].prompt[5])} MOVE, ${keyLabel(k[1].prompt[4])} LOCK   ·   PADS: D-PAD + A`;
+  const dev = opts.devices ?? ctx.settings.devices;
+  const two = opts.pickers.length === 2;
+  if (two) {
+    const part = (p: PlayerIndex) => dev[p] === 'gamepad'
+      ? `P${p + 1}: D-PAD MOVE, A LOCK`
+      : `P${p + 1}: ${keyLabel(k[p].prompt[3])} / ${keyLabel(k[p].prompt[5])} MOVE, ${keyLabel(k[p].prompt[4])} LOCK`;
+    help.textContent = `${part(0)}   ·   ${part(1)}   ·   ESC BACK`;
   } else {
-    help.textContent = '← → MOVE  ·  ENTER LOCK IN  ·  ESC BACK';
+    help.textContent = dev[0] === 'gamepad' ? 'D-PAD MOVE  ·  A LOCK IN  ·  B BACK' : '← → MOVE  ·  ENTER LOCK IN  ·  ESC BACK';
   }
-  const el = h('div', { class: 'screen dim' }, h('div', { class: 'title-label' }, opts.title ?? 'CHOOSE YOUR DUELIST'), h('div', { class: 'picker' }, ...cards), status, help);
+  // skill sheet for whatever each picker is hovering
+  const sheets = opts.pickers.map((p) => h('div', { class: `skills${two ? ` p${p + 1}` : ''}` }));
+  const el = h('div', { class: 'screen dim' }, h('div', { class: 'title-label' }, opts.title ?? 'CHOOSE YOUR DUELIST'), h('div', { class: 'picker' }, ...cards), h('div', { class: 'skills-wrap' }, ...sheets), status, help);
 
   const paint = () => {
     cards.forEach((card, ci) => {
@@ -178,6 +225,13 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
     });
     const s = opts.pickers.map((p, pi) => (opts.pickers.length === 2 ? `P${p + 1} ` : '') + (locked[pi] ? 'LOCKED' : 'CHOOSING...')).join('    ');
     status.textContent = opts.status ? `${s}    ${opts.status()}` : s;
+    opts.pickers.forEach((p, pi) => {
+      const lb = bindingLabels(ctx.settings, two ? p : 0, dev[two ? p : 0]);
+      // local versus keeps locked picks secret, so a locked sheet goes blank
+      const body = two && locked[pi] ? '<div class="sk-name">LOCKED IN</div>' : skillSheet(ROSTER[cur[pi]], lb.heal, lb.feint);
+      const html = (two ? `<div class="sk-who">P${p + 1}</div>` : '') + body;
+      if (sheets[pi].innerHTML !== html) sheets[pi].innerHTML = html;
+    });
     // show the hovered duelist on the stage
     const a = ROSTER[cur[0]];
     const b = opts.pickers.length === 2 ? ROSTER[cur[1]] : 'hector';
@@ -209,6 +263,13 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
       if (e.slot === 3) move(pi, -1);
       else if (e.slot === 5) move(pi, 1);
       else if (e.slot === 4 || (e.pad && e.slot === 0)) lock(pi);
+    }));
+    // pads: the d-pad moves (A already locks through the game event above)
+    offs.push(ctx.input.onPadButton(({ pad, button }) => {
+      const p = ctx.input.playerForPad(pad);
+      if (p === null) return;
+      if (button === 14) move(p, -1);
+      else if (button === 15) move(p, 1);
     }));
     offs.push(ctx.input.onMenu((m) => { if (m === 'back') { ctx.audio.sfx('uiBack'); back(); } }));
   } else {
@@ -261,6 +322,7 @@ export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
     <p><b>Lil' Dusty</b>: sawed-off, draws 150ms slower, hit 2, perfect 3, wins trades (deals 2, takes 1). Cigar heals 1 (x2) but his stare-down presses never count as first.</p>
     <p><b>Sister Smokin' Mercy</b>: her lantern flash blinds (no damage) and wins trades outright. Two blinds in a row = <b>Will of God</b>: win that draw to Vaporize (instant win) or Full Heal (once).</p>
     <p><b>Last Stand</b>: at 1 heart your perfect window is wider.</p>
+    <h3>KEYBOARD OR GAMEPAD</h3><p>Before each mode, every player picks KEYBOARD or GAMEPAD. Prompts then show that player's own buttons (letters for keys, A B X Y LB RB for pads). In Local Versus, press your LOCK key for keyboard, or A on a pad to take it; ← → on the pad switches sides, B lets go. Character select shows each duelist's skills with your buttons.</p>
     <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint, A = action. Rebind in Settings.</p>
   ` });
   const b = btn('BACK', back);
