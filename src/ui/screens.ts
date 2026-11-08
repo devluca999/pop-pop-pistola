@@ -1,9 +1,10 @@
 import type { CharacterId, FilterMode, PlayerIndex } from '../types';
 import type { AppCtx } from '../game/ctx';
 import type { MenuInput, GameInput } from '../input';
-import { keyLabel, padLabel, bindingLabels } from '../input/labels';
+import { keyLabel } from '../input/labels';
+import { BTN } from '../rules/config';
 import type { Device } from '../settings';
-import { DEFAULT_KEYS, DEFAULT_PADS } from '../settings';
+import { DEFAULT_KEYS, type KeyBindings } from '../settings';
 import { DITHER_MIN } from '../render/post';
 import { h, shout, clear } from './dom';
 import type { Difficulty } from '../rules';
@@ -96,14 +97,14 @@ const BLURB: Record<CharacterId, string> = {
   dusty: 'SAWED-OFF. 150MS SLOWER. HIT 2, PERFECT 3. WINS TRADES. CIGAR HEALS (X2).',
   mercy: 'LANTERN FLASH BLINDS, NO DAMAGE. 2 BLINDS IN A ROW = WILL OF GOD. CAN FEINT.',
 };
-/** Skill sheet for the character select panel. {H} / {F} become the player's heal / feint button. */
+/** Skill sheet for the character select panel. {H} / {F} become "hold ↓" / "↑". */
 const SKILLS: Record<CharacterId, { role: string; rows: [string, string][] }> = {
   hector: {
     role: 'THE ALL-ROUNDER',
     rows: [
       ['REVOLVER', 'Fastest draw. A hit deals 1 heart, a perfect draw 2.'],
-      ['WHISKEY {H}', 'Heals 1 heart, twice per match. Press it during READY. He gets drunk: that exchange his prompts wobble and he starts with 2 flinches.'],
-      ['FEINT {F}', 'During the standoff. If the rival twitches within half a second, they get 2 flinches. If not, you get 1.'],
+      ['WHISKEY {H}', 'Hold DOWN for 1 second during READY: heals 1 heart, twice per match. He gets drunk: that exchange his prompts wobble and he starts with 2 flinches.'],
+      ['FEINT {F}', 'Tap UP during the standoff. If the rival twitches within half a second, they get 2 flinches. If not, you get 1.'],
     ],
   },
   dusty: {
@@ -111,7 +112,7 @@ const SKILLS: Record<CharacterId, { role: string; rows: [string, string][] }> = 
     rows: [
       ['SAWED-OFF', 'Draws 150ms slower, but a hit deals 2 hearts and a perfect draw 3.'],
       ['WINS TRADES', 'If you both shoot at once, he deals 2 and only takes 1.'],
-      ['CIGAR {H}', 'Heals 1 heart, twice per match. That exchange he never wins a stare-down race.'],
+      ['CIGAR {H}', 'Hold DOWN for 1 second during READY: heals 1 heart, twice per match. That exchange he never wins a stare-down race.'],
       ['SMOKE', 'His shot or his cigar half-hides his rival\'s prompts for 1 round.'],
     ],
   },
@@ -119,8 +120,8 @@ const SKILLS: Record<CharacterId, { role: string; rows: [string, string][] }> = 
     role: 'THE TRICKSTER',
     rows: [
       ['LANTERN', 'Her draw does no damage. It blinds: the rival starts the next exchange with 2 flinches. She also wins trades outright.'],
-      ['WILL OF GOD', 'Blind twice without getting hit and her next winning draw lets her choose: VAPORIZE (instant win) or FULL HEAL (once per match).'],
-      ['FEINT {F}', 'Same as Hector: fake a draw to make the rival twitch.'],
+      ['WILL OF GOD', 'Blind twice without getting hit and her next winning draw lets her choose: LEFT = VAPORIZE (instant win), RIGHT = FULL HEAL (once per match).'],
+      ['FEINT {F}', 'Same as Hector: tap UP in the standoff to make the rival twitch.'],
       ['NO HEALS', 'She can only heal through Will of God.'],
     ],
   },
@@ -206,7 +207,7 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
   if (two) {
     const part = (p: PlayerIndex) => dev[p] === 'gamepad'
       ? `P${p + 1}: D-PAD MOVE, A LOCK`
-      : `P${p + 1}: ${keyLabel(k[p].prompt[3])} / ${keyLabel(k[p].prompt[5])} MOVE, ${keyLabel(k[p].prompt[4])} LOCK`;
+      : `P${p + 1}: ${keyLabel(k[p].left)} / ${keyLabel(k[p].right)} MOVE, ${keyLabel(k[p].action)} LOCK`;
     help.textContent = `${part(0)}   ·   ${part(1)}   ·   ESC BACK`;
   } else {
     help.textContent = dev[0] === 'gamepad' ? 'D-PAD MOVE  ·  A LOCK IN  ·  B BACK' : '← → MOVE  ·  ENTER LOCK IN  ·  ESC BACK';
@@ -226,7 +227,7 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
     const s = opts.pickers.map((p, pi) => (opts.pickers.length === 2 ? `P${p + 1} ` : '') + (locked[pi] ? 'LOCKED' : 'CHOOSING...')).join('    ');
     status.textContent = opts.status ? `${s}    ${opts.status()}` : s;
     opts.pickers.forEach((p, pi) => {
-      const lb = bindingLabels(ctx.settings, two ? p : 0, dev[two ? p : 0]);
+      const lb = { heal: 'HOLD ↓', feint: '↑' };
       // local versus keeps locked picks secret, so a locked sheet goes blank
       const body = two && locked[pi] ? '<div class="sk-name">LOCKED IN</div>' : skillSheet(ROSTER[cur[pi]], lb.heal, lb.feint);
       const html = (two ? `<div class="sk-who">P${p + 1}</div>` : '') + body;
@@ -260,16 +261,9 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
     offs.push(ctx.input.onGame((e: GameInput) => {
       if (e.kind !== 'press') return;
       const pi = e.player;
-      if (e.slot === 3) move(pi, -1);
-      else if (e.slot === 5) move(pi, 1);
-      else if (e.slot === 4 || (e.pad && e.slot === 0)) lock(pi);
-    }));
-    // pads: the d-pad moves (A already locks through the game event above)
-    offs.push(ctx.input.onPadButton(({ pad, button }) => {
-      const p = ctx.input.playerForPad(pad);
-      if (p === null) return;
-      if (button === 14) move(p, -1);
-      else if (button === 15) move(p, 1);
+      if (e.slot === BTN.left) move(pi, -1);
+      else if (e.slot === BTN.right) move(pi, 1);
+      else if (e.slot === BTN.action) lock(pi);
     }));
     offs.push(ctx.input.onMenu((m) => { if (m === 'back') { ctx.audio.sfx('uiBack'); back(); } }));
   } else {
@@ -289,41 +283,43 @@ export function charSelect(ctx: AppCtx, opts: CharSelectOpts, done: (picks: Char
 
 export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
   const k = ctx.settings.keys;
-  const kc = (s: string) => `<span class="kc">${s}</span>`;
-  const p1 = k[0].prompt.map(keyLabel).map(kc).join(' ');
-  const p2 = k[1].prompt.map(keyLabel).map(kc).join(' ');
-  const act = (c: string) => (c === 'Space' ? 'SPACE' : c === 'Enter' ? 'ENTER' : keyLabel(c));
+  const kc = (x: string) => `<span class="kc">${x}</span>`;
+  const set = (b: KeyBindings) => `${[b.up, b.left, b.down, b.right].map(keyLabel).join('')} + ${keyLabel(b.action)}`;
+  const N = CONFIG.nerve, S = CONFIG.standoff;
   const panel = h('div', { class: 'panel', html: `
     <h2>HOW TO PLAY</h2>
-    <p>Two duelists, three hearts each. First to zero loses. Each exchange takes about 12 seconds. Your prompts always appear on your own side of the screen, framed in your colour (left red, right blue).</p>
-    <h3>1 · READY</h3><p>Heal now if your duelist can (${kc(keyLabel(k[0].heal))} / ${kc(keyLabel(k[1].heal))}).</p>
-    <h3>2 · NERVE (3 PROMPTS)</h3><p>A quick 3-2-1, then a prompt. The label above the tile tells you what to do:</p>
+    <p>Two duelists, three hearts each. First to zero loses. You only ever use <b>four directions</b> and <b>one ACTION button</b>. Every exchange runs the same four beats (the strip at the top shows where you are) and takes about 12 seconds. Both players always get the same prompts, at the same moment.</p>
+    <h3>1 · READY (${CONFIG.readyMs / 1000}s)</h3><p>Hurt? <b>Hold ${kc('↓')} for 1 second</b> to heal; the ring fills as you hold.</p>
+    <h3>2 · NERVE (3 PROMPTS)</h3><p>A quick 3-2-1, then a prompt. The word above the tile tells you what to do:</p>
     <ul>
-      <li><b>TAP</b>: press the key once, fast.</li>
+      <li><b>TAP</b>: press it once, fast.</li>
       <li><b>HOLD</b>: press and keep holding until the bar fills.</li>
-      <li><b>MASH</b>: hit the key ${CONFIG.nerve.mashCount} times; the counter drops.</li>
+      <li><b>MASH</b>: hit it ${N.mashCount} times; the counter drops.</li>
       <li><b>TIME IT</b>: press when the needle is in the gold arc.</li>
       <li><b>RELEASE</b>: press and hold, then let go when it says LET GO!</li>
-      <li><b>IN ORDER</b>: press the keys left to right.</li>
+      <li><b>SEQUENCE</b>: the arrow combo, left to right (like ${kc('↑')} ${kc('←')} ${kc('→')}).</li>
       <li><b>STEADY</b>: do NOT press anything.</li>
     </ul>
-    <p>Wrong, late, or slower than your rival = a <b>flinch</b>. Flinches shrink your perfect window; 3 flinches and there is none. The first time a prompt type shows up, you get a one-second demo.</p>
-    <h3>3 · DRAW COUNTDOWN + STANDOFF</h3><p>A full 3-2-1 reveals how this draw works: <b>RING</b>, <b>WHEEL</b> or <b>SPEED TAP</b>. Then wait for the <b>church bell</b>. Crows, tumbleweeds, doors and coughs are fakes. Drawing early costs a heart while the crowd boos. Hector and Mercy can <b>feint</b> (${kc(keyLabel(k[0].feint))} / ${kc(keyLabel(k[1].feint))}): if the rival twitches within half a second they get 2 flinches; otherwise you get 1.</p>
-    <h3>4 · FUEGO!</h3>
+    <p>Wrong, late, or slower than your rival = a <b>flinch</b>. Flinches shrink your perfect window; 3 flinches and there is none. The first time a prompt type shows up you get a one-second demo.</p>
+    <h3>3 · STANDOFF (${S.minMs / 1000}-${S.maxMs / 1000}s)</h3><p>The draw type is announced: <b>RING</b>, <b>WHEEL</b> or <b>SPEED TAP</b>. Then wait for the <b>bell</b>. Every map has fakes (crows, doors, a train whistle, a hawk, breaking glass...). Pressing ACTION before the bell costs a heart. Hector and Mercy can <b>tap ${kc('↑')} to feint</b>: if the rival twitches within half a second they get 2 flinches; otherwise you get 1.</p>
+    <h3>4 · DRAW (ACTION)</h3>
     <ul>
-      <li><b>RING</b>: press your key. Faster shoots first; press as the ring hits the gold band for a perfect draw.</li>
-      <li><b>WHEEL</b>: press ACTION (${kc(act(k[0].action))} / ${kc(act(k[1].action))}, pad A) while the needle is in the gold arc. The thin cream slice is perfect. Missing the arc jams you until the next sweep.</li>
-      <li><b>SPEED TAP</b>: hit your key ${CONFIG.draw.speedCount} times. First to finish shoots; all taps in a tight burst is perfect.</li>
+      <li><b>RING</b>: press ACTION. Faster shoots first; press as the ring hits the gold band for a perfect draw. Within 120ms of each other is a trade.</li>
+      <li><b>WHEEL</b>: one shot. Inside the gold arc beats outside; if you're both inside, whoever is closer to the centre wins (within 15ms = trade). The thin cream slice is perfect. Speed doesn't matter here.</li>
+      <li><b>SPEED TAP</b>: hit ACTION ${CONFIG.draw.speedCount} times. First to finish shoots; a tight burst is perfect.</li>
     </ul>
-    <p>A wrong key jams the gun for 0.5s. Finishing within 120ms of each other is a trade.</p>
+    <h3>RESULT</h3><p>A short freeze, hearts update, next exchange.</p>
     <h3>ONE-ROUND EFFECTS</h3><p><b>Blinded</b> (Sister Mercy's lantern): 2 flinches next exchange. <b>Smoke</b> (Dusty's shotgun or cigar): your next prompts are half hidden. Both last one exchange, show a 1 ROUND tag under your hearts, and never stack.</p>
     <h3>THE DUELISTS</h3>
-    <p><b>Big Hat Hector</b>: revolver, hit 1, perfect 2. Whiskey heals 1 (x2) but he's drunk: wobbly prompts and 2 flinches.</p>
-    <p><b>Lil' Dusty</b>: sawed-off, draws 150ms slower, hit 2, perfect 3, wins trades (deals 2, takes 1). Cigar heals 1 (x2) but his stare-down presses never count as first.</p>
-    <p><b>Sister Smokin' Mercy</b>: her lantern flash blinds (no damage) and wins trades outright. Two blinds in a row = <b>Will of God</b>: win that draw to Vaporize (instant win) or Full Heal (once).</p>
+    <p><b>Big Hat Hector</b>: revolver, hit 1, perfect 2. Whiskey heals 1 (x2) but he's drunk: wobbly prompts and 2 flinches. Can feint.</p>
+    <p><b>Lil' Dusty</b>: sawed-off, draws 150ms slower, hit 2, perfect 3, wins trades (deals 2, takes 1). Cigar heals 1 (x2) but he never wins a stare-down that exchange.</p>
+    <p><b>Sister Smokin' Mercy</b>: her lantern blinds (no damage) and wins trades outright. Two blinds without getting hit = <b>Will of God</b>: on her next winning draw, ${kc('←')} Vaporize (instant win) or ${kc('→')} Full Heal (once). Can feint.</p>
     <p><b>Last Stand</b>: at 1 heart your perfect window is wider.</p>
-    <h3>KEYBOARD OR GAMEPAD</h3><p>Before each mode, every player picks KEYBOARD or GAMEPAD. Prompts then show that player's own buttons (letters for keys, A B X Y LB RB for pads). In Local Versus, press your LOCK key for keyboard, or A on a pad to take it; ← → on the pad switches sides, B lets go. Character select shows each duelist's skills with your buttons.</p>
-    <h3>CONTROLS</h3><p>P1 keys: ${p1} · P2 keys: ${p2} · Gamepads: A B X Y LB RB, LT heal, RT feint, A = action, START pauses (Esc on keyboard). Rebind in Settings.</p>
+    <h3>CONTROLS</h3>
+    <p><b>Keyboard</b>: P1 ${kc(set(k[0]))}, P2 ${kc(set(k[1]))}${k[1].action2 ? ` (or ${kc(keyLabel(k[1].action2))})` : ''}. Playing alone, WASD or arrows both work. Esc pauses.</p>
+    <p><b>Gamepad</b>: d-pad or left stick = directions, ${kc('A')} = ACTION, ${kc('RT')} also shoots. X / Y / B double as ← / ↑ / →. START pauses.</p>
+    <p><b>Touch</b>: swipe for directions, tap for ACTION. Each prompt shows the gesture.</p>
+    <p>Before each mode every player picks KEYBOARD, GAMEPAD or TOUCH; tiles show that device's buttons, and a small legend sits in your corner.</p>
   ` });
   const b = btn('BACK', back);
   const el = h('div', { class: 'screen dim' }, panel, h('div', { class: 'menu' }, b));
@@ -332,13 +328,16 @@ export function howTo(ctx: AppCtx, back: () => void): ScreenHandle {
 
 // ------------------------------------------------------------------ settings
 
+type BindKey = 'up' | 'down' | 'left' | 'right' | 'action' | 'action2';
+const BIND_KEYS: BindKey[] = ['up', 'down', 'left', 'right', 'action', 'action2'];
+
 export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
   const s = ctx.settings;
   const offs: (() => void)[] = [];
   const panel = h('div', { class: 'panel' });
   const el = h('div', { class: 'screen dim' }, panel);
   let tab: 'video' | 'audio' | 'controls' = 'video';
-  let capture: { p: PlayerIndex; what: 'prompt' | 'heal' | 'feint' | 'action'; slot: number; pad: boolean } | null = null;
+  let capture: { p: PlayerIndex; what: BindKey } | null = null;
   let stopCapture: (() => void) | null = null;
 
   const save = () => { ctx.saveSettings(); ctx.applySettings(); };
@@ -386,53 +385,37 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
     } else {
       const t = h('div', { class: 'bind-table' });
       t.append(h('div', {}, ''), h('div', {}, 'P1'), h('div', {}, 'P2'));
-      const bindBtn = (p: PlayerIndex, what: 'prompt' | 'heal' | 'feint' | 'action', slot: number, pad: boolean) => {
-        const label = pad
-          ? padLabel(what === 'prompt' ? s.pads[p].prompt[slot] : s.pads[p][what])
-          : keyLabel(what === 'prompt' ? s.keys[p].prompt[slot] : s.keys[p][what]);
-        const waiting = capture && capture.p === p && capture.what === what && capture.slot === slot && capture.pad === pad;
-        const b = h('button', { class: waiting ? 'wait' : '' }, waiting ? '...' : label);
-        b.onclick = () => startCapture({ p, what, slot, pad });
+      const bindBtn = (p: PlayerIndex, what: BindKey) => {
+        const code = s.keys[p][what];
+        const waiting = capture && capture.p === p && capture.what === what;
+        const b = h('button', { class: waiting ? 'wait' : '' }, waiting ? '...' : code ? keyLabel(code) : '-');
+        b.onclick = () => startCapture({ p, what });
         return b;
       };
-      for (const pad of [false, true]) {
-        t.append(h('div', { style: 'grid-column:1/-1;color:var(--gold);margin-top:calc(var(--u)*2)' }, pad ? 'GAMEPAD (PAD 1 = P1, PAD 2 = P2)' : 'KEYBOARD'));
-        for (let slot = 0; slot < 6; slot++) {
-          t.append(h('div', {}, `DRAW KEY ${slot + 1}`), bindBtn(0, 'prompt', slot, pad), bindBtn(1, 'prompt', slot, pad));
-        }
-        t.append(h('div', {}, 'HEAL'), bindBtn(0, 'heal', 0, pad), bindBtn(1, 'heal', 0, pad));
-        t.append(h('div', {}, 'FEINT'), bindBtn(0, 'feint', 0, pad), bindBtn(1, 'feint', 0, pad));
-        t.append(h('div', {}, 'ACTION (WHEEL)'), bindBtn(0, 'action', 0, pad), bindBtn(1, 'action', 0, pad));
+      for (const [what, label] of [['up', 'UP (FEINT)'], ['down', 'DOWN (HOLD = HEAL)'], ['left', 'LEFT'], ['right', 'RIGHT'], ['action', 'ACTION'], ['action2', 'ACTION (ALT)']] as [BindKey, string][]) {
+        t.append(h('div', {}, label), bindBtn(0, what), bindBtn(1, what));
       }
       const reset = h('button', { class: 'btn', style: 'margin-top:calc(var(--u)*3)' }, 'RESET TO DEFAULTS');
-      reset.onclick = () => { s.keys = structuredClone(DEFAULT_KEYS); s.pads = structuredClone(DEFAULT_PADS); save(); ctx.audio.sfx('uiBack'); render(); };
-      panel.append(h('p', {}, capture ? (capture.pad ? 'PRESS A GAMEPAD BUTTON (ESC CANCELS)' : 'PRESS A KEY (ESC CANCELS)') : 'CLICK A BINDING, THEN PRESS THE NEW KEY OR BUTTON.'), t, reset);
+      reset.onclick = () => { s.keys = structuredClone(DEFAULT_KEYS); save(); ctx.audio.sfx('uiBack'); render(); };
+      panel.append(
+        h('p', {}, capture ? 'PRESS A KEY (ESC CANCELS)' : 'KEYBOARD: CLICK A BINDING, THEN PRESS THE NEW KEY.'),
+        t,
+        h('p', { style: 'margin-top:calc(var(--u)*3)' }, 'GAMEPAD (FIXED): D-PAD / LEFT STICK = DIRECTIONS · A = ACTION · RT = SHOOT · X / Y / B = ← / ↑ / → · START = PAUSE'),
+        reset,
+      );
     }
     const b = h('button', { class: 'btn', style: 'margin-top:calc(var(--u)*4);display:block' }, 'BACK');
     b.onclick = () => { endCapture(); back(); };
     panel.append(b);
   };
 
-  const assign = (val: string | number) => {
+  const assign = (code: string) => {
     if (!capture) return;
     const c = capture;
-    if (c.pad) {
-      const b = s.pads[c.p];
-      if (c.what === 'prompt') b.prompt[c.slot] = val as number; else b[c.what] = val as number;
-    } else {
-      // Swap if the key is already used elsewhere, so nothing ends up double-bound.
-      const code = val as string;
-      for (const pb of s.keys) {
-        const i = pb.prompt.indexOf(code);
-        const old = c.what === 'prompt' ? s.keys[c.p].prompt[c.slot] : s.keys[c.p][c.what];
-        if (i >= 0) pb.prompt[i] = old;
-        if (pb.heal === code) pb.heal = old;
-        if (pb.feint === code) pb.feint = old;
-        if (pb.action === code) pb.action = old;
-      }
-      const b = s.keys[c.p];
-      if (c.what === 'prompt') b.prompt[c.slot] = code; else b[c.what] = code;
-    }
+    // Swap if the key is already used elsewhere, so nothing ends up double-bound.
+    const old = s.keys[c.p][c.what];
+    for (const kb of s.keys) for (const f of BIND_KEYS) if (kb[f] === code) (kb as unknown as Record<string, string | undefined>)[f] = old;
+    s.keys[c.p][c.what] = code;
     save();
     ctx.audio.sfx('uiSelect');
     endCapture();
@@ -443,10 +426,9 @@ export function settingsScreen(ctx: AppCtx, back: () => void): ScreenHandle {
     capture = c;
     const offKey = ctx.input.onRawKey((e) => {
       if (e.code === 'Escape') { endCapture(); render(); return; }
-      if (!c.pad) assign(e.code);
+      assign(e.code);
     });
-    const offPad = ctx.input.onRawPad(({ pad, button }) => { if (c.pad && pad === c.p) assign(button); else if (c.pad && pad === 0) assign(button); });
-    stopCapture = () => { offKey(); offPad(); };
+    stopCapture = () => { offKey(); };
     render();
   };
   const endCapture = () => { stopCapture?.(); stopCapture = null; capture = null; };

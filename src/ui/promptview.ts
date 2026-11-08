@@ -23,6 +23,9 @@ export interface Wheel {
   setNeedle(frac: number): void;
 }
 
+/** WHEEL draw: the same for both players. */
+export interface WheelSpec { arc: number; start: number; dir: 1 | -1 }
+
 /** A timing wheel: needle sweeps clockwise; gold arc = success, cream slice = perfect. */
 export function makeWheel(): Wheel {
   const el = svg('svg', { class: 'wheel', viewBox: '-50 -50 100 100' }) as SVGSVGElement;
@@ -95,8 +98,8 @@ export class PromptView {
     if (this.phase === 'demo') return;
     this.phase = 'demo';
     const d = h('div', { class: `demo demo-${this.o.type}` });
-    const t = tile(this.o.type === 'steady' ? '✋' : 'A', 'ghosty');
-    if (this.o.type === 'order') d.append(tile('A', 'ghosty d1'), tile('B', 'ghosty d2'), tile('C', 'ghosty d3'));
+    const t = tile(this.o.type === 'steady' ? '✋' : '→', 'ghosty');
+    if (this.o.type === 'order') d.append(tile('↑', 'ghosty d1'), tile('←', 'ghosty d2'), tile('→', 'ghosty d3'));
     else d.append(t);
     if (this.o.type === 'hold' || this.o.type === 'release') d.append(h('div', { class: 'demo-bar' }, h('i')));
     if (this.o.type === 'time') d.append(h('div', { class: 'demo-needle' }));
@@ -213,12 +216,14 @@ export class DrawView {
   private counter?: HTMLElement;
   private pips: HTMLElement[] = [];
   private lastCount = -1;
+  private spec?: WheelSpec;
 
-  constructor(zone: HTMLElement, private type: DrawType, label: string, o: { mine: boolean; frame: 'p1' | 'p2'; tag: string; smoke: boolean }) {
+  constructor(zone: HTMLElement, private type: DrawType, label: string, o: { mine: boolean; frame: 'p1' | 'p2'; tag: string; smoke: boolean; wheel?: WheelSpec }) {
+    this.spec = o.wheel;
     this.root = h('div', { class: `pv draw-view frame-${o.frame} ${o.mine ? 'mine' : 'theirs'}` });
     const big = o.mine ? 'big' : '';
     this.tl = tile(label, `${big} pop-in ${label.length > 2 ? 'wide' : ''}`);
-    const verb = h('div', { class: 'verb', html: pixelText(type === 'wheel' ? 'TIME IT' : type === 'speed' ? `TAP x${CONFIG.draw.speedCount}` : 'DRAW') });
+    const verb = h('div', { class: 'verb', html: pixelText(type === 'wheel' ? 'ONE SHOT' : type === 'speed' ? `TAP x${CONFIG.draw.speedCount}` : 'DRAW') });
     const body = h('div', { class: 'pv-body' });
     if (type === 'ring') {
       const s = svg('svg', { class: 'ring', viewBox: '-50 -50 100 100' });
@@ -254,7 +259,8 @@ export class DrawView {
     }
     if (this.type === 'wheel' && this.wheel) {
       const P = CONFIG.draw.wheelPeriodMs;
-      this.wheel.setArc(arcCenter / P, arcHalf / P, perfect / P);
+      const dir = this.spec?.dir ?? 1;
+      this.wheel.setArc(dir * arcCenter / P, arcHalf / P, perfect / P);
     }
   }
 
@@ -263,7 +269,11 @@ export class DrawView {
       this.ring.setAttribute('r', String(Math.max(0, ringRadius(ms))));
       this.ring.setAttribute('opacity', ms > CONFIG.draw.ringMs ? '0' : '1');
     }
-    if (this.wheel) this.wheel.setNeedle(ms / CONFIG.draw.wheelPeriodMs);
+    if (this.wheel && !this.frozen) {
+      const P = CONFIG.draw.wheelPeriodMs;
+      const dir = this.spec?.dir ?? 1;
+      this.wheel.setNeedle((dir * ((this.spec?.start ?? 0) + ms)) / P);
+    }
     if (this.counter && count !== this.lastCount) {
       this.lastCount = count;
       this.counter.innerHTML = pixelText(String(Math.max(0, CONFIG.draw.speedCount - count)));
@@ -279,7 +289,12 @@ export class DrawView {
     void this.tl.offsetWidth;
     this.tl.classList.add('bad');
   }
-  drew() { this.tl.classList.add('down', 'ok'); }
+  private frozen = false;
+  /** Shot fired. WHEEL: the needle freezes where you shot; `missed` = outside the arc. */
+  drew(missed = false) {
+    this.frozen = this.type === 'wheel';
+    this.tl.classList.add('down', missed ? 'bad' : 'ok');
+  }
   destroy() { this.root.remove(); }
 }
 

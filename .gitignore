@@ -6,3 +6,4 @@ dist
 .DS_Store
 refs/
 .env*
+.claude/worktrees/

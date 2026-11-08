@@ -38,3 +38,27 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - Prompts sit on each player's own side; left is framed red (P1 / you), right blue (P2 / CPU / rival).
 - Status effects (blind, smoke) live in `PlayerState.status`, last exactly the next exchange, never stack, and show a "1 ROUND" tag under the hearts. Dusty's cigar heal now also smokes the rival's next exchange.
 - Timings rebalanced: ready 1.5s, 3 prompts with 0.6s countdowns, 1.2s draw countdown, 0.7–2.6s wait. About 12s per exchange once demos are done; first-time demos add up to ~3s early in a match.
+
+## Playtest pass (hackathon feedback), latest wins
+
+**1. Input: directions + one action key.** Letter prompts are gone, and so is the look-alike-letter logic (`confusables`, `assignKeys`).
+- Every prompt uses one of five buttons: ↑ ↓ ← → and ACTION (`BTN` in `src/rules/config.ts`).
+- Keyboard: P1 WASD + Space; P2 arrows + Enter (or Right Shift). Playing alone (CPU / online), both sets work.
+- Gamepad (fixed, not rebindable): d-pad / left stick = directions, A = ACTION, RT = ACTION (shown as the shoot button on draws), X / Y / B = ← / ↑ / →. START pauses.
+- Heal = hold ↓ for 1s in READY (a ring fills). Feint = tap ↑ in the standoff (Hector, Mercy). For Dusty ↑ does nothing. In the standoff only ACTION counts as an early draw; other directions are harmless. A feint "bite" is any non-↑ press inside 0.5s.
+- Will of God: ← Vaporize, → Full Heal.
+- SEQUENCE = 3-arrow combo, never the same arrow twice in a row.
+- Every draw is on ACTION, so the old "wrong key jams" rule is gone.
+- Tiles show the arrow, or the action glyph for that player's device: SPACE / ENTER, A (RT on draws), or ☝ on touch. CPU and online rivals' tiles use the local player's glyphs, since they press the same buttons.
+
+**2. One consistent loop.** Every exchange: READY (2s) → NERVE (3 prompts, 0.6s 3-2-1 before each) → STANDOFF (1.5-4s random; the draw type is announced for the first 0.9s, then fakes and feints) → BELL + DRAW → RESULT (1.5s freeze).
+- A step strip at the top shows the beat. A small legend in each local player's corner shows their inputs.
+- The old 3-2-1 draw countdown is replaced by the announcement. The bell comes after it, never during.
+- Average ≈12s per exchange once demos are done (tested).
+
+**3. Fairness.**
+- Both players get the same prompts with identical parameters and the same buttons: same TIME IT arc, same release cue, same mash count, and the same WHEEL arc, start angle, direction and perfect slice. The plan stores one value for both.
+- WHEEL is now accuracy, not speed. Each player gets one shot. Inside the arc beats outside. Both inside: closer to the centre wins, within 15ms = trade. Nobody inside = nobody hits. Dusty's 150ms draw delay doesn't apply to WHEEL.
+- CPU = simulated human. Reaction ~N(380,90) easy, N(290,70) normal, N(230,50) hard, never under 180ms. Aim error on TIME IT / WHEEL / RING-gold, occasional misses and fake-outs. It only reacts to things already on screen (prompt appeared, LET GO cue, bell, the visible arc). Hard sometimes aims for the RING gold band.
+- `tests/fairness.test.ts`: two identical bots, 1000 seeds per prompt type and per draw type. Each seed is played twice with the bots' dice swapped between seats, so any edge can only come from the seat; P1 must win 50% ±3% (it does: exactly 50% when the rules are symmetric). Also CPU Normal vs a 290ms human on RING draws ≈ 50% ±3%. Fake-outs are a separate skill and are tested separately.
+- Online: the guest starts each exchange `lead − RTT/2` after receiving the plan (RTT from ping/pong), so both clients start the prompts on the same frame, give or take jitter.

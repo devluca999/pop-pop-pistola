@@ -1,11 +1,10 @@
-import type { CharacterId, PlayerIndex } from '../types';
-import { CONFIG, type CharacterStats, type Config, type DrawType, type PromptType } from './config';
+import type { CharacterId, FakeKind, PlayerIndex } from '../types';
+import { CONFIG, BTN, BUTTONS, DIRECTIONS, type Button, type CharacterStats, type Config, type DrawType, type PromptType } from './config';
 import { makeRng, type Rng } from './rng';
 import type {
   DrawOutcome, DrawWindow, ExchangePlan, ExchangeResult, FakePlan, FeintOutcome, InputEvent,
   MatchState, Outcome, PlayerState, PromptOutcome, PromptPlan, WillChoice,
 } from './model';
-import { KEY_SLOTS } from './model';
 
 const other = (i: PlayerIndex): PlayerIndex => (i === 0 ? 1 : 0);
 const stats = (c: CharacterId, cfg: Config): CharacterStats => cfg.characters[c];
@@ -38,11 +37,16 @@ export function markSeen(state: MatchState, plan: ExchangePlan): MatchState {
 // ---------------------------------------------------------------- plan
 
 export interface PlanOptions {
-  /** Key labels for each player's 6 slots, used to avoid look-alike keys. */
-  labels?: [string[], string[]];
   /** Types already seen this match (MatchState.seen). */
   seen?: string[];
+  /** Fakes this map can throw (default: the Main Street set). */
+  fakeKinds?: readonly FakeKind[];
+  /** Tests: force every nerve prompt / the draw to one type. */
+  forcePrompt?: PromptType;
+  forceDraw?: DrawType;
 }
+
+export const DEFAULT_FAKES: readonly FakeKind[] = ['crow', 'tumbleweed', 'door', 'cough'];
 
 function weighted<T extends string>(rng: Rng, w: Record<T, number>): T {
   const entries = Object.entries(w) as [T, number][];
@@ -52,50 +56,24 @@ function weighted<T extends string>(rng: Rng, w: Record<T, number>): T {
   return entries[entries.length - 1][0];
 }
 
-/**
- * Assign key slots for a whole exchange so no two *different* look-alike labels appear
- * (across both players). Each request is a list of keys that must be distinct (IN ORDER),
- * usually of length 1. Randomised backtracking: always finds an answer when one exists.
- */
-export function assignKeys(
-  requests: { player: PlayerIndex; count: number }[], labels: [string[], string[]] | undefined, rng: Rng, cfg: Config = CONFIG,
-): number[][] {
-  const slots = [...Array(KEY_SLOTS).keys()];
-  const shuffled = () => { const a = [...slots]; for (let i = a.length - 1; i > 0; i--) { const j = rng.int(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const out: number[][] = requests.map(() => []);
-  if (!labels) {
-    requests.forEach((r, i) => { const a = shuffled(); out[i] = a.slice(0, r.count); });
+/** Buttons for one prompt. SEQUENCE is a combo of directions with no button twice in a row. */
+function pickKeys(type: PromptType, rng: Rng, cfg: Config): Button[] {
+  if (type === 'steady') return [];
+  if (type === 'order') {
+    const out: Button[] = [];
+    while (out.length < cfg.nerve.orderLength) {
+      const d = rng.pick(DIRECTIONS);
+      if (d !== out[out.length - 1]) out.push(d);
+    }
     return out;
   }
-  const group = (l: string) => cfg.confusables.findIndex((g) => g.includes(l.toUpperCase()));
-  // flatten into single picks; order[i] = candidate order per pick (fixed up front for determinism)
-  const picks: { req: number; player: PlayerIndex; cand: number[] }[] = [];
-  requests.forEach((r, i) => { for (let k = 0; k < r.count; k++) picks.push({ req: i, player: r.player, cand: shuffled() }); });
-  const used = new Map<number, string>(); // group -> label in use
-  const useCount = new Map<number, number>();
-  let budget = 5000;
-  const solve = (i: number): boolean => {
-    if (i === picks.length) return true;
-    if (--budget < 0) return false;
-    const pk = picks[i];
-    for (const slot of pk.cand) {
-      if (out[pk.req].includes(slot)) continue;
-      const lbl = labels[pk.player][slot].toUpperCase();
-      const g = group(lbl);
-      if (g >= 0 && used.has(g) && used.get(g) !== lbl) continue;
-      out[pk.req].push(slot);
-      if (g >= 0) { used.set(g, lbl); useCount.set(g, (useCount.get(g) ?? 0) + 1); }
-      if (solve(i + 1)) return true;
-      out[pk.req].pop();
-      if (g >= 0) { const c = (useCount.get(g) ?? 1) - 1; useCount.set(g, c); if (c === 0) used.delete(g); }
-    }
-    return false;
-  };
-  if (solve(0)) return out;
-  // No clean answer (odd custom bindings): fall back to plain random distinct picks.
-  return requests.map((r) => shuffled().slice(0, r.count));
+  return [rng.pick(BUTTONS)];
 }
 
+/**
+ * Everything random about one exchange. Both players get the same prompts with the same
+ * parameters and the same buttons, so neither side is ever dealt an easier exchange.
+ */
 export function generatePlan(seed: number, opts: PlanOptions = {}, cfg: Config = CONFIG): ExchangePlan {
   const rng = makeRng(seed);
   const n = cfg.nerve;
@@ -104,31 +82,31 @@ export function generatePlan(seed: number, opts: PlanOptions = {}, cfg: Config =
   let c = cfg.readyMs;
   let last: PromptType | null = null;
   for (let k = 0; k < n.prompts; k++) {
-    let type = weighted(rng, n.weights);
-    if (type === last) type = weighted(rng, n.weights); // fewer repeats, still possible
+    let type = opts.forcePrompt ?? weighted(rng, n.weights);
+    if (!opts.forcePrompt && type === last) type = weighted(rng, n.weights); // fewer repeats, still possible
     last = type;
     const demo = !seen.has(type);
     seen.add(type);
     const t = c + n.countdownMs + (demo ? n.demoMs : 0);
     const end = t + n.windowMs[type];
-    const p: PromptPlan = { type, c, t, end, demo, keys: [[], []] };
+    const p: PromptPlan = { type, c, t, end, demo, keys: pickKeys(type, rng, cfg) };
     if (type === 'release') p.cueMs = Math.round(rng.range(n.releaseCueMin, n.releaseCueMax));
-    if (type === 'time') p.arcMs = [Math.round(rng.range(n.timeArcCenterMin, n.timeArcCenterMax)), Math.round(rng.range(n.timeArcCenterMin, n.timeArcCenterMax))];
+    if (type === 'time') p.arcMs = Math.round(rng.range(n.timeArcCenterMin, n.timeArcCenterMax));
     prompts.push(p);
     c = end + n.gapMs;
   }
 
   const s = cfg.standoff;
   const standoffStart = c;
-  const drawType = weighted(rng, cfg.draw.weights);
+  const drawType = opts.forceDraw ?? weighted(rng, cfg.draw.weights);
   const drawDemo = !seen.has(`draw:${drawType}`);
-  const countdownEnd = standoffStart + s.countdownMs + (drawDemo ? s.demoMs : 0);
-  const bellT = countdownEnd + Math.round(rng.range(s.minWaitMs, s.maxWaitMs));
+  const announceEnd = standoffStart + s.announceMs + (drawDemo ? s.demoMs : 0);
+  const bellT = standoffStart + (drawDemo ? s.demoMs : 0) + Math.round(rng.range(s.minMs, s.maxMs));
 
   const fakes: FakePlan[] = [];
-  const kinds = ['crow', 'tumbleweed', 'door', 'cough'] as const;
+  const kinds = opts.fakeKinds?.length ? opts.fakeKinds : DEFAULT_FAKES;
   const want = s.minFakes + rng.int(s.maxFakes - s.minFakes + 1);
-  const lo = countdownEnd + s.fakeEdgeMs;
+  const lo = announceEnd + s.fakeEdgeMs;
   const hi = bellT - s.fakeEdgeMs;
   for (let tries = 0; fakes.length < want && tries < 40; tries++) {
     if (hi <= lo) break;
@@ -137,26 +115,21 @@ export function generatePlan(seed: number, opts: PlanOptions = {}, cfg: Config =
   }
   fakes.sort((a, b) => a.t - b.t);
 
-  // Keys for the whole exchange at once, so look-alikes never share the screen.
-  const reqs: { player: PlayerIndex; count: number }[] = [];
-  for (const p of prompts) for (const pl of [0, 1] as PlayerIndex[]) reqs.push({ player: pl, count: p.type === 'order' ? n.orderLength : 1 });
-  reqs.push({ player: 0, count: 1 }, { player: 1, count: 1 });
-  const keys = assignKeys(reqs, opts.labels, rng, cfg);
-  prompts.forEach((p, k) => { p.keys = [keys[k * 2], keys[k * 2 + 1]]; });
-  const drawSlots: [number, number] = [keys[reqs.length - 2][0], keys[reqs.length - 1][0]];
-
   const d = cfg.draw;
   return {
     seed,
     prompts,
     standoffStart,
-    countdownEnd,
+    announceEnd,
     drawType,
     drawDemo,
     fakes,
     bellT,
-    drawSlots,
-    wheelArc: [Math.round(rng.range(d.wheelArcCenterMin, d.wheelArcCenterMax)), Math.round(rng.range(d.wheelArcCenterMin, d.wheelArcCenterMax))],
+    wheel: {
+      arc: Math.round(rng.range(d.wheelArcCenterMin, d.wheelArcCenterMax)),
+      start: Math.round(rng.range(0, d.wheelPeriodMs)),
+      dir: rng.chance(0.5) ? 1 : -1,
+    },
   };
 }
 
@@ -201,6 +174,12 @@ export function wheelDistance(a: number, b: number, period: number): number {
   return Math.min(d, period - d);
 }
 
+/** Where the WHEEL needle is (ms into a sweep) at exchange time t. */
+export function wheelPhase(plan: ExchangePlan, t: number, cfg: Config = CONFIG): number {
+  const P = cfg.draw.wheelPeriodMs;
+  return ((((plan.wheel.start + (t - plan.bellT)) % P) + P) % P);
+}
+
 export function canHeal(p: PlayerState, cfg: Config = CONFIG): boolean {
   return p.healsLeft > 0 && p.hearts < cfg.hearts && stats(p.character, cfg).healAmount > 0;
 }
@@ -217,7 +196,8 @@ export function evalPrompt(events: InputEvent[], p: PromptPlan, player: PlayerIn
   const n = cfg.nerve;
   const start = p.t;
   const end = p.end;
-  const keys = p.keys[player];
+  void player; // prompts are identical for both players
+  const keys = p.keys;
   const presses = events.filter((e) => e.kind === 'press' && e.t >= start && e.t < end && e.t <= now) as { t: number; slot: number }[];
   const releaseOf = (slot: number, after: number) =>
     events.find((e) => e.kind === 'release' && e.slot === slot && e.t > after && e.t <= now);
@@ -258,7 +238,7 @@ export function evalPrompt(events: InputEvent[], p: PromptPlan, player: PlayerIn
       const pr = presses[0];
       if (!pr) return closed ? res('miss', end, null) : pend();
       if (pr.slot !== keys[0]) return res('miss', pr.t, pr.t);
-      const arc = p.arcMs![player];
+      const arc = p.arcMs!;
       return Math.abs(pr.t - start - arc) <= n.timeArcHalfMs ? res('ok', pr.t, pr.t) : res('miss', pr.t, pr.t);
     }
     case 'release': {
@@ -286,6 +266,23 @@ export function evalPrompt(events: InputEvent[], p: PromptPlan, player: PlayerIn
 
 // ---------------------------------------------------------------- exchange
 
+/** READY: progress (0..1) of a DOWN hold toward a heal, and whether it completed. */
+function healHold(L: InputEvent[], now: number, cfg: Config): { progress: number; done: boolean } {
+  const hold = cfg.heal.holdMs;
+  let best = 0;
+  for (const e of L) {
+    if (e.kind !== 'press' || e.slot !== BTN.down || e.t >= cfg.readyMs || e.t > now) continue;
+    const rel = L.find((r) => r.kind === 'release' && r.slot === BTN.down && r.t > e.t);
+    const until = Math.min(rel && rel.t <= now ? rel.t : now, cfg.readyMs);
+    const held = until - e.t;
+    if (held >= hold) return { progress: 1, done: true };
+    best = Math.max(best, held / hold);
+  }
+  return { progress: Math.max(0, best), done: false };
+}
+
+const isPress = (e: InputEvent, b?: Button) => e.kind === 'press' && (b === undefined || e.slot === b);
+
 /**
  * Resolve an exchange from both players' input logs, as far as `now` allows.
  * Pure: the same plan, state and logs always give the same result. Call it every frame;
@@ -302,11 +299,10 @@ export function resolveExchange(
   const ps = state.players;
   const L = idx.map((i) => [...logs[i]].sort((a, b) => a.t - b.t)) as [InputEvent[], InputEvent[]];
 
-  // Ready beat: heals
-  const healed = idx.map((i) => {
-    const h = L[i].find((e) => e.kind === 'heal' && e.t < cfg.readyMs && e.t <= now);
-    return !!h && canHeal(ps[i], cfg);
-  }) as [boolean, boolean];
+  // READY: hold DOWN to heal
+  const holds = idx.map((i) => healHold(L[i], now, cfg));
+  const healProgress = idx.map((i) => (canHeal(ps[i], cfg) ? holds[i].progress : 0)) as [number, number];
+  const healed = idx.map((i) => holds[i].done && canHeal(ps[i], cfg)) as [boolean, boolean];
   const hearts = idx.map((i) =>
     Math.min(cfg.hearts, ps[i].hearts + (healed[i] ? stats(ps[i].character, cfg).healAmount : 0)),
   ) as [number, number];
@@ -317,7 +313,7 @@ export function resolveExchange(
 
   const flinches = idx.map((i) => (ps[i].status.blind ? cfg.blindFlinches : 0) + (drunk[i] ? cfg.drunkFlinches : 0)) as [number, number];
 
-  // Nerve phase
+  // NERVE
   const prompts: [PromptOutcome, PromptOutcome][] = plan.prompts.map((p) => {
     const r = idx.map((i) => evalPrompt(L[i], p, i, now, cfg)) as [PromptOutcome, PromptOutcome];
     // Stare-down race: when both completed correctly, the later one flinches.
@@ -332,20 +328,19 @@ export function resolveExchange(
   });
   for (const r of prompts) for (const i of idx) if (r[i].status !== 'ok' && r[i].status !== 'pending') flinches[i]++;
 
-  // Standoff (draw countdown + wait): feints and early draws
-  const isDraw = (e: InputEvent) => e.kind === 'press' || e.kind === 'action';
+  // STANDOFF: UP feints, ACTION is an early draw
+  const inStandoff = (e: InputEvent) => e.t >= plan.standoffStart && e.t < plan.bellT && e.t <= now;
   const feints: FeintOutcome[] = [];
   const consumed = new Set<InputEvent>();
   for (const i of idx) {
     if (!stats(ps[i].character, cfg).canFeint) continue;
-    const f = L[i].find((e) => e.kind === 'feint' && e.t >= plan.standoffStart && e.t < plan.bellT && e.t <= now);
+    const f = L[i].find((e) => isPress(e, BTN.up) && inStandoff(e));
     if (!f) continue;
     const winEnd = Math.min(f.t + cfg.feint.reactWindowMs, plan.bellT);
     const v = other(i);
-    const bite = L[v].find((e) => e.kind !== 'release' && e.t > f.t && e.t < winEnd && e.t <= now);
+    // any twitch counts, except the victim's own feint
+    const bite = L[v].find((e) => e.kind === 'press' && e.slot !== BTN.up && e.t > f.t && e.t < winEnd && e.t <= now);
     if (bite) {
-      // a pad press can arrive as press + action at once: both belong to the same bite
-      for (const e of L[v]) if (isDraw(e) && e.t === bite.t) consumed.add(e);
       consumed.add(bite);
       flinches[v] += cfg.feint.victimFlinches;
       feints.push({ by: i, t: f.t, status: 'bit', biteT: bite.t });
@@ -359,11 +354,11 @@ export function resolveExchange(
 
   const drawWin = idx.map((i) => drawWindow(plan.drawType, flinches[i], lastStand[i], cfg)) as [DrawWindow, DrawWindow];
   const goldBandW = idx.map((i) => goldBand(flinches[i], lastStand[i], cfg)) as [number, number];
-  const base = { healed, hearts, drunk, cigar, will, lastStand, prompts, feints, flinches, drawWin, goldBand: goldBandW };
+  const base = { healProgress, healed, hearts, drunk, cigar, will, lastStand, prompts, feints, flinches, drawWin, goldBand: goldBandW };
 
   let early: { by: PlayerIndex; t: number } | null = null;
   for (const i of idx) {
-    const e = L[i].find((ev) => isDraw(ev) && ev.t >= plan.standoffStart && ev.t < plan.bellT && ev.t <= now && !consumed.has(ev));
+    const e = L[i].find((ev) => isPress(ev, BTN.action) && inStandoff(ev) && !consumed.has(ev));
     if (e && (!early || e.t < early.t)) early = { by: i, t: e.t };
   }
   if (early) {
@@ -371,54 +366,40 @@ export function resolveExchange(
     const damage: [number, number] = [0, 0];
     damage[early.by] = cfg.earlyDrawHeartLoss;
     return {
-      ...base, done: true, draws: [null, null], jammedUntil: [0, 0], speedCount: [0, 0],
+      ...base, done: true, draws: [null, null], speedCount: [0, 0],
       outcome: { kind: 'early', actor: early.by, damage, blinded: [false, false], perfect: [false, false], fake, t: early.t },
     };
   }
 
-  // Draw at the bell
+  // DRAW at the bell: always ACTION
   const B = plan.bellT;
   const d = cfg.draw;
   const winEnd = B + d.windowMs[plan.drawType];
-  const jammedUntil: [number, number] = [0, 0];
   const speedCount: [number, number] = [0, 0];
+  const shots = idx.map((i) => L[i].filter((e) => isPress(e, BTN.action) && e.t >= B && e.t < winEnd && e.t <= now));
+  const mk = (i: PlayerIndex, t: number, perfect: boolean, extra: Partial<DrawOutcome> = {}): DrawOutcome => ({
+    pressT: t, reaction: t - B, effective: t - B + stats(ps[i].character, cfg).drawDelayMs, perfect, jams: 0, ...extra,
+  });
+
+  if (plan.drawType === 'wheel') return resolveWheel(plan, ps, will, shots, drawWin, base, now, winEnd, cfg, mk);
+
   const draws = idx.map((i) => {
-    let lockedUntil = -Infinity;
-    let jams = 0;
-    let count = 0;
-    let first = 0;
-    const done = (t: number, perfect: boolean): DrawOutcome => ({
-      pressT: t, reaction: t - B, effective: t - B + stats(ps[i].character, cfg).drawDelayMs, perfect, jams,
-    });
-    const jam = (t: number) => { jams++; lockedUntil = t + d.jamMs; jammedUntil[i] = lockedUntil; };
-    for (const e of L[i]) {
-      if (e.t < B || e.t >= winEnd || e.t > now || e.t < lockedUntil) continue;
-      if (plan.drawType === 'wheel') {
-        if (e.kind !== 'action') continue;
-        const dist = wheelDistance(e.t - B, plan.wheelArc[i], d.wheelPeriodMs);
-        if (dist <= drawWin[i].arcHalf) return done(e.t, drawWin[i].perfect > 0 && dist <= drawWin[i].perfect);
-        jam(e.t);
-        continue;
-      }
-      if (e.kind !== 'press') continue;
-      if (e.slot !== plan.drawSlots[i]) { jam(e.t); continue; }
-      if (plan.drawType === 'ring') return done(e.t, isPerfect(e.t - B, drawWin[i].perfect, cfg));
-      if (count === 0) first = e.t;
-      count++;
-      speedCount[i] = count;
-      if (count >= d.speedCount) return done(e.t, drawWin[i].perfect > 0 && e.t - first <= drawWin[i].perfect);
-    }
-    return null;
+    const sh = shots[i];
+    if (plan.drawType === 'ring') return sh[0] ? mk(i, sh[0].t, isPerfect(sh[0].t - B, drawWin[i].perfect, cfg)) : null;
+    speedCount[i] = Math.min(sh.length, d.speedCount);
+    if (sh.length < d.speedCount) return null;
+    const last = sh[d.speedCount - 1];
+    return mk(i, last.t, drawWin[i].perfect > 0 && last.t - sh[0].t <= drawWin[i].perfect);
   }) as [DrawOutcome | null, DrawOutcome | null];
 
-  const pending = (): ExchangeResult => ({ ...base, done: false, draws, jammedUntil, speedCount, outcome: null });
+  const pending = (): ExchangeResult => ({ ...base, done: false, draws, speedCount, outcome: null });
   if (now < B) return pending();
 
   const [d0, d1] = draws;
   if (!d0 && !d1) {
     if (now < winEnd) return pending();
     return {
-      ...base, done: true, draws, jammedUntil, speedCount,
+      ...base, done: true, draws, speedCount,
       outcome: { kind: 'reset', actor: null, damage: [0, 0], blinded: [false, false], perfect: [false, false], fake: null, t: winEnd },
     };
   }
@@ -430,16 +411,55 @@ export function resolveExchange(
     const lastChance = B + da.effective + d.tradeWindowMs - stats(ps[b].character, cfg).drawDelayMs;
     const decideAt = Math.min(Math.max(lastChance, da.pressT), winEnd);
     if (now < decideAt) return pending();
-    return { ...base, done: true, draws, jammedUntil, speedCount, outcome: winDraw(a, draws, ps, will, cfg, Math.max(decideAt, da.pressT)) };
+    return { ...base, done: true, draws, speedCount, outcome: winDraw(a, draws, ps, will, cfg, Math.max(decideAt, da.pressT)) };
   }
 
   const tDecided = Math.max(d0.pressT, d1.pressT);
   const diff = d0.effective - d1.effective;
   if (Math.abs(diff) <= d.tradeWindowMs) {
-    return { ...base, done: true, draws, jammedUntil, speedCount, outcome: trade(draws as [DrawOutcome, DrawOutcome], ps, will, cfg, tDecided) };
+    return { ...base, done: true, draws, speedCount, outcome: trade(draws as [DrawOutcome, DrawOutcome], ps, will, cfg, tDecided) };
   }
   const a: PlayerIndex = diff < 0 ? 0 : 1;
-  return { ...base, done: true, draws, jammedUntil, speedCount, outcome: winDraw(a, draws, ps, will, cfg, tDecided) };
+  return { ...base, done: true, draws, speedCount, outcome: winDraw(a, draws, ps, will, cfg, tDecided) };
+}
+
+type Base = Omit<ExchangeResult, 'done' | 'draws' | 'speedCount' | 'outcome'>;
+
+/**
+ * WHEEL: accuracy, not speed. Each player gets one shot. Inside the arc beats outside;
+ * both inside: closer to the centre wins, within wheelTradeMs is a trade. Nobody inside: nobody hits.
+ */
+function resolveWheel(
+  plan: ExchangePlan, ps: [PlayerState, PlayerState], will: [boolean, boolean], shots: InputEvent[][],
+  drawWin: [DrawWindow, DrawWindow], base: Base, now: number, winEnd: number, cfg: Config,
+  mk: (i: PlayerIndex, t: number, perfect: boolean, extra?: Partial<DrawOutcome>) => DrawOutcome,
+): ExchangeResult {
+  const idx: PlayerIndex[] = [0, 1];
+  const draws = idx.map((i) => {
+    const s = shots[i][0];
+    if (!s) return null;
+    const dist = wheelDistance(wheelPhase(plan, s.t, cfg), plan.wheel.arc, cfg.draw.wheelPeriodMs);
+    const inside = dist <= drawWin[i].arcHalf;
+    return mk(i, s.t, inside && drawWin[i].perfect > 0 && dist <= drawWin[i].perfect, { dist, inside });
+  }) as [DrawOutcome | null, DrawOutcome | null];
+  const speedCount: [number, number] = [0, 0];
+  const bothShot = draws[0] && draws[1];
+  if (!bothShot && now < winEnd) return { ...base, done: false, draws, speedCount, outcome: null };
+  const t = bothShot ? Math.max(draws[0]!.pressT, draws[1]!.pressT) : winEnd;
+  const inside = idx.map((i) => !!draws[i]?.inside);
+  const blank = { blinded: [false, false] as [boolean, boolean], perfect: [false, false] as [boolean, boolean], fake: null };
+  if (!inside[0] && !inside[1]) {
+    return { ...base, done: true, draws, speedCount, outcome: { kind: 'reset', actor: null, damage: [0, 0], ...blank, t } };
+  }
+  if (inside[0] !== inside[1]) {
+    const a: PlayerIndex = inside[0] ? 0 : 1;
+    return { ...base, done: true, draws, speedCount, outcome: winDraw(a, draws, ps, will, cfg, t) };
+  }
+  const diff = draws[0]!.dist! - draws[1]!.dist!;
+  if (Math.abs(diff) <= cfg.draw.wheelTradeMs) {
+    return { ...base, done: true, draws, speedCount, outcome: trade(draws as [DrawOutcome, DrawOutcome], ps, will, cfg, t) };
+  }
+  return { ...base, done: true, draws, speedCount, outcome: winDraw(diff < 0 ? 0 : 1, draws, ps, will, cfg, t) };
 }
 
 function dmgOf(c: CharacterId, perfect: boolean, cfg: Config) {

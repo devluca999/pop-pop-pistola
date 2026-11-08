@@ -11,7 +11,6 @@ import {
   titleScreen, mainMenu, difficultyMenu, charSelect, howTo, settingsScreen, navMenu, ROSTER, type ScreenHandle,
 } from './ui/screens';
 import { h } from './ui/dom';
-import { bindingLabels } from './input/labels';
 import { deviceSelectSolo, deviceSelectLocal } from './ui/devices';
 import type { Device } from './settings';
 import { onlineConfigured, openRoom, makeRoomCode, normalizeCode, type Room } from './net/online';
@@ -183,8 +182,6 @@ function lobby(role: 'host' | 'guest', code = makeRoomCode()) {
 function onlineSelect(room: Room) {
   let mine: CharacterId | null = null;
   let theirs: CharacterId | null = null;
-  let theirLabels: string[] | undefined;
-  const myLabels = () => bindingLabels(settings, 0, devices[0]).prompt;
   let started = false;
   const offs: (() => void)[] = [];
   const statusText = () => (theirs ? 'RIVAL LOCKED' : 'RIVAL CHOOSING...');
@@ -199,13 +196,13 @@ function onlineSelect(room: Room) {
     started = true;
     offs.forEach((o) => o());
     startDuel(
-      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', remoteLabels: theirLabels, devices },
+      { mode: 'online', characters: chars, localView: room.role === 'host' ? 0 : 1, net: room, isHost: room.role === 'host', devices },
       () => onlineSelect(room),
       () => { room.leave(); toMenu(); },
     );
   };
   offs.push(room.on((m: NetMsg) => {
-    if (m.type === 'pick') { theirs = m.character; theirLabels = m.labels; sel.setStatus(''); tryStart(); }
+    if (m.type === 'pick') { theirs = m.character; sel.setStatus(''); tryStart(); }
     if (m.type === 'start' && room.role === 'guest') begin(room.role === 'guest' ? m.characters : m.characters);
     if (m.type === 'bye') { offs.forEach((o) => o()); toast('YOUR RIVAL LEFT'); room.leave(); toOnline(); }
   }));
@@ -214,7 +211,7 @@ function onlineSelect(room: Room) {
   }));
   const sel = charSelect(ctx, { pickers: [0], devices, title: `ONLINE · ${room.code}`, status: statusText }, ([c]) => {
     mine = c;
-    room.send({ type: 'pick', character: c, labels: myLabels() });
+    room.send({ type: 'pick', character: c });
     tryStart();
   }, () => { offs.forEach((o) => o()); room.leave(); toOnline(); });
   show({ dispose: () => sel.dispose() });

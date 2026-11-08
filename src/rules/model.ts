@@ -1,8 +1,5 @@
 import type { CharacterId, FakeKind } from '../types';
-import type { DrawType, PromptType } from './config';
-
-/** Number of keys in each player's prompt set. Plans refer to keys by slot index. */
-export const KEY_SLOTS = 6;
+import type { Button, DrawType, PromptType } from './config';
 
 export interface PromptPlan {
   type: PromptType;
@@ -12,12 +9,12 @@ export interface PromptPlan {
   end: number;
   /** First time this type appears in the match: show a mini demo during the countdown. */
   demo: boolean;
-  /** Key slots per player: 1 key, or orderLength keys for IN ORDER. */
-  keys: [number[], number[]];
-  /** RELEASE: when the tile says RELEASE (ms after t). */
+  /** Buttons to press: 1, or orderLength directions for SEQUENCE. The same for both players. */
+  keys: Button[];
+  /** RELEASE: when the tile says LET GO (ms after t). */
   cueMs?: number;
-  /** TIME IT: arc centre per player (ms after t). */
-  arcMs?: [number, number];
+  /** TIME IT: arc centre (ms after t), the same for both players. */
+  arcMs?: number;
 }
 
 export interface FakePlan {
@@ -29,25 +26,22 @@ export interface FakePlan {
 export interface ExchangePlan {
   seed: number;
   prompts: PromptPlan[];
-  /** Draw countdown starts (the standoff begins here: drawing from now on is early). */
+  /** The standoff begins here: from now on ACTION is an early draw and UP is a feint. */
   standoffStart: number;
-  countdownEnd: number;
+  /** The draw-type announcement (and first-time demo) ends here. */
+  announceEnd: number;
   drawType: DrawType;
   drawDemo: boolean;
   fakes: FakePlan[];
   bellT: number;
-  /** RING / SPEED TAP: key slot per player. */
-  drawSlots: [number, number];
-  /** WHEEL: arc centre per player, ms into each needle sweep. */
-  wheelArc: [number, number];
+  /** WHEEL, the same for both players: success arc centre (ms into a sweep), needle phase at the bell, direction. */
+  wheel: { arc: number; start: number; dir: 1 | -1 };
 }
 
+/** A button going down or up. Heal (hold DOWN in READY) and feint (UP in the standoff) are read from these. */
 export type InputEvent =
-  | { t: number; kind: 'press'; slot: number }
-  | { t: number; kind: 'release'; slot: number }
-  | { t: number; kind: 'action' }
-  | { t: number; kind: 'heal' }
-  | { t: number; kind: 'feint' };
+  | { t: number; kind: 'press'; slot: Button }
+  | { t: number; kind: 'release'; slot: Button };
 
 /** Effects that last exactly one exchange (the next one), then clear. They never stack. */
 export interface StatusEffects {
@@ -94,11 +88,14 @@ export interface FeintOutcome {
 }
 
 export interface DrawOutcome {
-  pressT: number;         // absolute exchange time the draw completed
+  pressT: number;         // absolute exchange time the draw completed (WHEEL: the shot)
   reaction: number;       // ms after the bell
   effective: number;      // reaction + character draw delay
   perfect: boolean;
   jams: number;
+  /** WHEEL: distance (ms) from the arc centre, and whether the shot was inside the arc. */
+  dist?: number;
+  inside?: boolean;
 }
 
 export type OutcomeKind = 'early' | 'reset' | 'shot' | 'trade' | 'blind' | 'will' | 'mutualBlind';
@@ -123,6 +120,8 @@ export interface DrawWindow {
 
 export interface ExchangeResult {
   done: boolean;
+  /** READY: how far each player's DOWN hold is toward a heal (0..1). */
+  healProgress: [number, number];
   healed: [boolean, boolean];
   hearts: [number, number];
   drunk: [boolean, boolean];
@@ -135,7 +134,6 @@ export interface ExchangeResult {
   drawWin: [DrawWindow, DrawWindow];
   /** Back-compat alias: RING gold band width per player. */
   goldBand: [number, number];
-  jammedUntil: [number, number];
   /** SPEED TAP progress per player. */
   speedCount: [number, number];
   draws: [DrawOutcome | null, DrawOutcome | null];

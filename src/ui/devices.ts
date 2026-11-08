@@ -2,6 +2,7 @@ import type { PlayerIndex } from '../types';
 import type { AppCtx } from '../game/ctx';
 import type { Device } from '../settings';
 import { keyLabel } from '../input/labels';
+import { BTN } from '../rules/config';
 import { h } from './dom';
 import { navMenu, type ScreenHandle } from './screens';
 
@@ -64,7 +65,7 @@ export function deviceSelectLocal(ctx: AppCtx, done: (d: [Device, Device]) => vo
   const choice: [Device | null, Device | null] = [null, null];
   const padOf: [number | null, number | null] = [null, null];
   const k = ctx.settings.keys;
-  const lockKey = (p: PlayerIndex) => keyLabel(k[p].prompt[4]);
+  const lockKey = (p: PlayerIndex) => keyLabel(k[p].action);
 
   const cols = ([0, 1] as PlayerIndex[]).map((p) => {
     const kbRow = h('div', { class: 'dev-opt' });
@@ -122,7 +123,7 @@ export function deviceSelectLocal(ctx: AppCtx, done: (d: [Device, Device]) => vo
   const offs: (() => void)[] = [];
   // keyboard: the LOCK key of each half picks keyboard for that player
   offs.push(ctx.input.onGame((e) => {
-    if (e.pad || e.kind !== 'press' || e.slot !== 4) return;
+    if (e.pad || e.kind !== 'press' || e.slot !== BTN.action) return;
     setKeyboard(e.player);
   }));
   offs.push(ctx.input.onPadButton(({ pad, button }) => {

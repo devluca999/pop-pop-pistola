@@ -1,12 +1,12 @@
-import type { CharacterId, PlayerIndex, ScreenSide } from '../types';
+import type { CharacterId, FakeKind, PlayerIndex, ScreenSide } from '../types';
 import {
-  CONFIG, applyExchange, canHeal, cpuExchangeLog, cpuFeintReaction, generatePlan, makeRng, markSeen, randomSeed,
+  CONFIG, BTN, applyExchange, canHeal, cpuExchangeLog, cpuFeintReaction, generatePlan, makeRng, markSeen, randomSeed,
   resolveExchange, newMatch, DRAW_LABEL,
-  type Difficulty, type ExchangePlan, type ExchangeResult, type InputEvent, type MatchState, type WillChoice,
+  type Button, type Difficulty, type ExchangePlan, type ExchangeResult, type InputEvent, type MatchState, type WillChoice,
   type PromptType, type DrawType,
 } from '../rules';
 import type { GameInput } from '../input';
-import { keyLabel, bindingLabels } from '../input/labels';
+import { bindingLabels, buttonLabel, type ButtonLabels } from '../input/labels';
 import type { Device } from '../settings';
 import { h, tile, shout, heartSvg, clear } from '../ui/dom';
 import { pixelText } from '../ui/pixelfont';
@@ -25,8 +25,8 @@ export interface DuelSetup {
   localView: PlayerIndex;
   net?: NetLink;
   isHost?: boolean;
-  /** Online: the rival's key labels (for look-alike avoidance and their own display). */
-  remoteLabels?: string[];
+  /** Fakes the chosen map can throw during the standoff. */
+  fakeKinds?: readonly FakeKind[];
   /** Controller each player chose (by player index). Prompts show that device's buttons. */
   devices?: [Device, Device];
 }
@@ -45,9 +45,9 @@ interface Run {
   views: (PromptView | null)[][];
   draws: (DrawView | null)[];
   counts: number[][];
-  lastJam: [number, number];
   lastUpSent: number;
   countdownEl: HTMLElement | null;
+  healEls: (HTMLElement | null)[];
 }
 
 const NAMES: Record<CharacterId, string> = { hector: 'BIG HAT HECTOR', dusty: "LIL' DUSTY", mercy: 'SISTER MERCY' };
@@ -56,10 +56,11 @@ const APPEAR_SFX: Record<PromptType, SfxName> = {
   tap: 'tapTick', hold: 'holdRise', mash: 'mashClick', time: 'timeTick', release: 'tapTick', order: 'orderBlip', steady: 'steadyHum',
 };
 const DRAW_HELP: Record<DrawType, string> = {
-  ring: 'PRESS YOUR KEY AS THE RING HITS THE GOLD',
-  wheel: 'PRESS ACTION WHILE THE NEEDLE IS IN THE GOLD',
-  speed: `TAP YOUR KEY ${CONFIG.draw.speedCount} TIMES, FAST`,
+  ring: 'SHOOT FIRST · RING ON THE GOLD = DEAD-EYE',
+  wheel: 'ONE SHOT · CLOSEST TO THE GOLD CENTRE WINS',
+  speed: `TAP ${CONFIG.draw.speedCount} TIMES · FIRST TO FINISH SHOOTS`,
 };
+const STEPS = ['READY', 'NERVE', 'STANDOFF', 'DRAW'] as const;
 const ICON_EYE = '<svg viewBox="0 0 10 8" shape-rendering="crispEdges"><path d="M0 4h1V3h1V2h6v1h1v1h1v1H9v1H8v1H2V6H1V5H0z" fill="#f2e6c9"/><rect x="4" y="3" width="2" height="2" fill="#1d140e"/><path d="M1 7 9 1" stroke="#c8321f" stroke-width="1.2"/></svg>';
 const ICON_SMOKE = '<svg viewBox="0 0 10 8" shape-rendering="crispEdges"><path d="M2 3h2V2h3v1h1v1h1v2H8v1H1V6H0V4h2z" fill="#c9c4b8"/></svg>';
 
@@ -132,25 +133,18 @@ export class Duel {
   private isCpu(i: PlayerIndex): boolean { return this.setup.mode === 'cpu' && i !== this.setup.localView; }
   private pan(i: PlayerIndex) { return this.side(i) === 'near' ? -0.3 : 0.3; }
   private after(ms: number, fn: () => void) { this.timers.push({ at: performance.now() + ms, fn }); }
-  private bindingIndex(i: PlayerIndex): PlayerIndex { return this.setup.mode === 'local' ? i : 0; }
 
-  /** The six prompt-key labels a player sees (what look-alike avoidance works on). */
-  labelsFor(i: PlayerIndex): string[] {
-    if (this.isCpu(i)) return this.ctx.settings.keys[1].prompt.map(keyLabel);
-    if (!this.isLocalHuman(i)) return this.setup.remoteLabels ?? ['1', '2', '3', '4', '5', '6'];
-    return this.myLabels(i).prompt;
-  }
-  /** Button labels on the device this player chose on the controller screen. */
-  private myLabels(i: PlayerIndex) { return bindingLabels(this.ctx.settings, this.bindingIndex(i), this.device(i)); }
   private device(i: PlayerIndex): Device { return this.setup.devices?.[i] ?? 'keyboard'; }
-  private keyFor(i: PlayerIndex, slot: number): string { return this.labelsFor(i)[slot] ?? '?'; }
-  private healKey(i: PlayerIndex): string { return this.myLabels(i).heal; }
-  private feintKey(i: PlayerIndex): string { return this.myLabels(i).feint; }
-  private actionKey(i: PlayerIndex): string {
-    if (this.isCpu(i)) return 'ENTER';
-    if (!this.isLocalHuman(i)) return 'GO';
-    return this.myLabels(i).action;
+  /**
+   * Button glyphs shown on player i's tiles. CPU and remote rivals use the local player's
+   * glyphs: everyone presses the same buttons, so their tiles look the same as yours.
+   */
+  private labels(i: PlayerIndex): ButtonLabels {
+    const local = this.setup.mode === 'local';
+    const viewer: PlayerIndex = this.isLocalHuman(i) ? i : this.setup.localView;
+    return bindingLabels(this.ctx.settings, local ? viewer : 0, this.device(viewer), !local);
   }
+  private keyFor(i: PlayerIndex, b: Button, draw = false): string { return buttonLabel(this.labels(i), b, draw); }
 
   private banner(text: string, ms = 1200, cls = '') {
     const el = h('div', { class: `banner ${cls}` }, text);
@@ -227,6 +221,12 @@ export class Duel {
         items.append(h('div', { class: 'item' }, p.charge >= CONFIG.mercy.chargeForWill ? 'WILL OF GOD' : 'CHARGE'), pips);
       }
       col.append(items);
+      // always-visible control legend for the people at this screen
+      if (this.isLocalHuman(i)) {
+        const ch = CONFIG.characters[p.character];
+        const extras = [ch.healAmount > 0 ? 'HOLD ↓ HEAL' : '', ch.canFeint ? '↑ FEINT' : ''].filter(Boolean).join(' · ');
+        col.append(h('div', { class: 'legend' }, this.labels(i).legend + (extras ? ` · ${extras}` : '')));
+      }
       if (res && this.phase === 'exchange') {
         const fl = h('div', { class: 'row' });
         for (let k = 0; k < CONFIG.draw.maxFlinches; k++) fl.append(h('div', { class: `flinch ${k < res.flinches[i] ? 'on' : ''}` }));
@@ -257,7 +257,7 @@ export class Duel {
   }
 
   private makePlan(): ExchangePlan {
-    return generatePlan(randomSeed(), { labels: [this.labelsFor(0), this.labelsFor(1)], seen: this.state.seen });
+    return generatePlan(randomSeed(), { seen: this.state.seen, fakeKinds: this.setup.fakeKinds });
   }
 
   private nextExchange() {
@@ -280,7 +280,7 @@ export class Duel {
     const run: Run = {
       ex, plan, t0, logs: [[], []], cpuQueue: [], fired: new Set(), res: null, remoteUpTo: -Infinity,
       views: plan.prompts.map(() => [null, null]), draws: [null, null], counts: plan.prompts.map(() => [0, 0]),
-      lastJam: [0, 0], lastUpSent: 0, countdownEl: null,
+      lastUpSent: 0, countdownEl: null, healEls: [null, null],
     };
     for (const i of [0, 1] as PlayerIndex[]) {
       if (this.isCpu(i)) run.cpuQueue = cpuExchangeLog(plan, this.state, i, this.setup.difficulty ?? 'normal', makeRng(plan.seed ^ 0x9e3779b9));
@@ -300,6 +300,19 @@ export class Duel {
     }
     stage.setSmokeCloud(this.state.players.some((p) => p.status.smoke));
     this.hudKey = '';
+    this.setStep(0);
+  }
+
+  /** The READY → NERVE → STANDOFF → DRAW strip at the top. */
+  private stepEl: HTMLElement | null = null;
+  private setStep(k: number) {
+    if (!this.stepEl) {
+      this.stepEl = h('div', { class: 'step-strip' }, ...STEPS.map((n) => h('span', {}, n)));
+      this.top.append(this.stepEl);
+    }
+    if (this.stepEl.dataset.k === String(k)) return;
+    this.stepEl.dataset.k = String(k);
+    [...this.stepEl.children].forEach((c, j) => { c.classList.toggle('on', j === k); c.classList.toggle('done', j < k); });
   }
 
   /** Called every frame by the app. */
@@ -350,13 +363,21 @@ export class Duel {
         if (!this.isLocalHuman(i) || !canHeal(this.state.players[i])) continue;
         const nm = this.state.players[i].character === 'hector' ? 'WHISKEY' : 'CIGAR';
         const zone = this.zoneFor(i);
-        const tl = tile(this.healKey(i), 'pop-in');
+        // hold DOWN: the ring around the tile fills
+        const tl = tile(this.keyFor(i, BTN.down), 'pop-in heal-tile');
         tl.append(h('span', { class: 'tag' }, nm));
-        const hint = h('div', { class: 'pv frame-' + this.frameOf(i) + ' mine' }, h('div', { class: 'verb', html: pixelText('HEAL?') }), tl);
+        const ring = h('div', { class: 'heal-ring' }, tl);
+        const hint = h('div', { class: 'pv frame-' + this.frameOf(i) + ' mine' }, h('div', { class: 'verb', html: pixelText('HOLD TO HEAL') }), ring);
         zone.append(hint);
-        this.after(CONFIG.readyMs - 150, () => hint.remove());
+        run.healEls[i] = ring;
+        this.after(CONFIG.readyMs - 100, () => hint.remove());
       }
     });
+    for (const i of [0, 1] as PlayerIndex[]) {
+      const ring = run.healEls[i];
+      if (ring && t < CONFIG.readyMs) ring.style.setProperty('--p', String(res.healProgress[i]));
+    }
+    if (t >= CONFIG.readyMs && t < plan.standoffStart) this.setStep(1);
 
     for (const i of [0, 1] as PlayerIndex[]) {
       if (res.healed[i]) this.once(run, `heal${i}`, () => {
@@ -378,13 +399,13 @@ export class Duel {
         for (const i of [0, 1] as PlayerIndex[]) {
           run.views[k][i] = new PromptView(this.zoneFor(i), {
             type: p.type,
-            labels: p.keys[i].map((s) => this.keyFor(i, s)),
+            labels: p.keys.map((b) => this.keyFor(i, b)),
             mine: this.isLocalHuman(i),
             wobble: res.drunk[i],
             smoke: this.state.players[i].status.smoke,
             frame: this.frameOf(i),
             tag: this.tagOf(i),
-            arcMs: p.arcMs?.[i],
+            arcMs: p.arcMs,
             cueMs: p.cueMs,
           });
         }
@@ -442,44 +463,39 @@ export class Duel {
       if (t >= p.end + 350) this.once(run, `pvEnd${k}`, () => { for (const v of views) v?.destroy(); });
     });
 
-    // Draw countdown: the draw type is revealed with a full 3-2-1; the bell comes after
+    // STANDOFF: announce the draw type (with a demo the first time), then wait for the bell
     if (t >= plan.standoffStart && t < plan.bellT) {
+      this.setStep(2);
       this.once(run, 'standoff', () => {
         this.clearZones();
-        audio.drumroll(Math.min(1600, plan.countdownEnd - plan.standoffStart));
+        audio.drumroll(Math.min(1600, plan.announceEnd - plan.standoffStart));
         const el = h('div', { class: 'countdown' });
         this.top.append(el);
         run.countdownEl = el;
         for (const i of [0, 1] as PlayerIndex[]) {
           stage.setPose(this.side(i), 'ready');
-          if (this.isLocalHuman(i) && CONFIG.characters[this.state.players[i].character].canFeint && this.setup.mode !== 'local') {
-            this.banner(`${this.feintKey(i)}: FEINT`, 1600, 'small');
+          if (this.isLocalHuman(i) && CONFIG.characters[this.state.players[i].character].canFeint) {
+            const hint = h('div', { class: `feint-hint frame-${this.frameOf(i)}` }, tile(this.keyFor(i, BTN.up), 'small'), 'FEINT');
+            this.zoneFor(i).append(hint);
           }
         }
       });
       const el = run.countdownEl;
       if (el) {
         const label = DRAW_LABEL[plan.drawType];
-        const S = CONFIG.standoff;
-        const inDemo = plan.drawDemo && t < plan.standoffStart + S.demoMs;
-        let mode = '';
-        if (inDemo) mode = 'demo';
-        else if (t < plan.countdownEnd) mode = `c${Math.min(3, Math.max(1, Math.ceil((plan.countdownEnd - t) / (S.countdownMs / 3))))}`;
-        else mode = 'wait';
+        const inDemo = plan.drawDemo && t < plan.standoffStart + CONFIG.standoff.demoMs;
+        const mode = inDemo ? 'demo' : t < plan.announceEnd ? 'announce' : 'wait';
         if (el.dataset.mode !== mode) {
           el.dataset.mode = mode;
-          const help = plan.drawType === 'wheel'
-            ? `${DRAW_HELP.wheel} (${this.localActionHint()})`
-            : DRAW_HELP[plan.drawType];
+          const help = `${DRAW_HELP[plan.drawType]} (${this.localActionHint()})`;
           if (mode === 'demo') {
             el.replaceChildren(h('div', { class: 'draw-label', html: pixelText(label) }), h('div', { class: 'sub' }, `NEW DRAW: ${help}`));
             audio.sfx('countGo', { gain: 0.5 });
-          } else if (mode === 'wait') {
-            el.replaceChildren(h('div', { class: 'draw-label small', html: pixelText(label) }), h('div', { class: 'sub' }, 'WAIT FOR THE BELL...'));
+          } else if (mode === 'announce') {
+            el.replaceChildren(h('div', { class: 'draw-label', html: pixelText(label) }), h('div', { class: 'sub' }, help));
+            audio.sfx('countTick');
           } else {
-            const digit = Number(mode.slice(1));
-            el.replaceChildren(h('div', { class: 'draw-label', html: pixelText(label) }), tile(String(digit), 'pop-in'), h('div', { class: 'sub' }, help));
-            audio.sfx('countTick', { rate: 1 + (3 - digit) * 0.1 });
+            el.replaceChildren(h('div', { class: 'draw-label small', html: pixelText(label) }), h('div', { class: 'sub' }, 'WAIT FOR THE BELL...'));
           }
         }
       }
@@ -502,6 +518,7 @@ export class Duel {
 
     // Bell
     if (t >= plan.bellT) {
+      this.setStep(3);
       this.once(run, 'bell', () => {
         run.countdownEl?.remove();
         run.countdownEl = null;
@@ -513,11 +530,11 @@ export class Duel {
         this.shoutAt('FUEGO!', 900, 'slam huge');
         this.clearZones();
         for (const i of [0, 1] as PlayerIndex[]) {
-          const label = plan.drawType === 'wheel' ? this.actionKey(i) : this.keyFor(i, plan.drawSlots[i]);
-          const v = new DrawView(this.zoneFor(i), plan.drawType, label, {
+          const v = new DrawView(this.zoneFor(i), plan.drawType, this.keyFor(i, BTN.action, true), {
             mine: this.isLocalHuman(i), frame: this.frameOf(i), tag: this.tagOf(i), smoke: this.state.players[i].status.smoke,
+            wheel: plan.wheel,
           });
-          v.setWindow(res.drawWin[i].perfect, res.drawWin[i].arcHalf, plan.wheelArc[i], this.isLocalHuman(i));
+          v.setWindow(res.drawWin[i].perfect, res.drawWin[i].arcHalf, plan.wheel.arc, this.isLocalHuman(i));
           run.draws[i] = v;
         }
       });
@@ -529,21 +546,19 @@ export class Duel {
         if (this.isLocalHuman(i) && res.speedCount[i] > 0 && plan.drawType === 'speed') {
           this.once(run, `sp${i}${res.speedCount[i]}`, () => audio.sfx('mashClick', { rate: 1 + res.speedCount[i] * 0.05, pan: this.pan(i) }));
         }
-        if (res.jammedUntil[i] > run.lastJam[i]) {
-          run.lastJam[i] = res.jammedUntil[i];
-          v.jam();
-          audio.sfx('jam', { pan: this.pan(i) });
-          stage.setPose(this.side(i), 'jam');
-          this.banner(`${this.tagOf(i)} JAMMED!`, 700, 'small');
-        }
-        if (res.draws[i]) this.once(run, `drew${i}`, () => { v.drew(); stage.setPose(this.side(i), 'draw'); });
+        const dr = res.draws[i];
+        if (dr) this.once(run, `drew${i}`, () => {
+          v.drew(dr.inside === false);
+          stage.setPose(this.side(i), 'draw');
+          if (plan.drawType === 'wheel') audio.sfx(dr.inside ? 'wheelTick' : 'jam', { pan: this.pan(i) });
+        });
       }
     }
   }
 
   private localActionHint(): string {
-    if (this.setup.mode === 'local') return `P1 ${this.actionKey(0)} · P2 ${this.actionKey(1)}`;
-    return this.actionKey(this.setup.localView);
+    if (this.setup.mode === 'local') return `P1 ${this.keyFor(0, BTN.action, true)} · P2 ${this.keyFor(1, BTN.action, true)}`;
+    return this.keyFor(this.setup.localView, BTN.action, true);
   }
 
   private localLastStand(res: ExchangeResult) {
@@ -561,7 +576,7 @@ export class Duel {
     if (!run || this.phase !== 'exchange') return;
     const t = e.t - run.t0;
     if (t < 0) return;
-    const ev: InputEvent = e.kind === 'press' || e.kind === 'release' ? { t, kind: e.kind, slot: e.slot } : { t, kind: e.kind };
+    const ev: InputEvent = { t, kind: e.kind, slot: e.slot };
     run.logs[i].push(ev);
     if (this.setup.mode === 'online') this.setup.net!.send({ type: 'input', ex: run.ex, ev });
     this.onAnyEvent(i, ev);
@@ -573,7 +588,8 @@ export class Duel {
     if (!run) return;
     const { stage, audio } = this.ctx;
     const plan = run.plan;
-    if (ev.kind === 'feint' && ev.t >= plan.standoffStart && ev.t < plan.bellT && CONFIG.characters[this.state.players[i].character].canFeint) {
+    const isFeint = ev.kind === 'press' && ev.slot === BTN.up && ev.t >= plan.standoffStart && ev.t < plan.bellT;
+    if (isFeint && CONFIG.characters[this.state.players[i].character].canFeint) {
       this.once(run, `feint${i}`, () => {
         stage.setPose(this.side(i), 'feint');
         audio.sfx('feint', { pan: this.pan(i) });
@@ -582,8 +598,8 @@ export class Duel {
           const delay = cpuFeintReaction(this.setup.difficulty ?? 'normal', makeRng(plan.seed + Math.round(ev.t)));
           if (delay !== null) {
             // The CPU flinches at the feint; drop its planned fake-fall so it isn't punished twice.
-            run.cpuQueue = run.cpuQueue.filter((q) => !((q.kind === 'press' || q.kind === 'action') && q.t < plan.bellT && q.t > ev.t));
-            run.cpuQueue.push({ t: ev.t + delay, kind: 'press', slot: 0 });
+            run.cpuQueue = run.cpuQueue.filter((q) => !(q.slot === BTN.action && q.t < plan.bellT && q.t > ev.t));
+            run.cpuQueue.push({ t: ev.t + delay, kind: 'press', slot: BTN.action }, { t: ev.t + delay + 60, kind: 'release', slot: BTN.action });
             run.cpuQueue.sort((a, b) => a.t - b.t);
           }
         }
@@ -736,16 +752,17 @@ export class Duel {
     if (!this.isLocalHuman(m)) { this.choiceDeadline = performance.now() + 6000; return; }
     this.choiceDeadline = performance.now() + 3200;
     const row = h('div', { class: 'choice-row' });
-    row.append(h('div', {}, tile(this.actionKey(m), 'big'), 'VAPORIZE'));
-    if (canHealNow) row.append(h('div', {}, tile(this.healKey(m), 'big'), 'FULL HEAL'));
+    row.append(h('div', {}, tile(this.keyFor(m, BTN.left), 'big'), 'VAPORIZE'));
+    if (canHealNow) row.append(h('div', {}, tile(this.keyFor(m, BTN.right), 'big'), 'FULL HEAL'));
     const panel = h('div', { class: 'center', style: 'top:62%' }, row);
     panel.id = 'will-choice';
     this.top.append(panel);
   }
   private choiceInput(i: PlayerIndex, e: GameInput) {
     if (i !== this.choiceFor || this.willChoice) return;
-    if (e.kind === 'heal') this.resolveChoice('heal');
-    else if (e.kind === 'press' || e.kind === 'action') this.resolveChoice('vaporize');
+    if (e.kind !== 'press') return;
+    if (e.slot === BTN.right) this.resolveChoice('heal');
+    else if (e.slot === BTN.left) this.resolveChoice('vaporize');
   }
   private choiceTick(now: number) {
     if (!this.willChoice && !this.isCpu(this.choiceFor) && now > this.choiceDeadline) this.resolveChoice('vaporize');
@@ -790,6 +807,8 @@ export class Duel {
 
   private matchOver() {
     this.phase = 'over';
+    this.stepEl?.remove();
+    this.stepEl = null;
     this.clearZones();
     const { stage, audio } = this.ctx;
     const w = this.state.winner;
@@ -878,6 +897,8 @@ export class Duel {
 
   private lastPing = 0;
   private hiccup = false;
+  /** Smoothed round trip to the rival (ms). */
+  private rtt = 0;
   remoteRematch = false;
 
   private netTick(now: number) {
@@ -887,7 +908,7 @@ export class Duel {
       run.lastUpSent = now;
       net.send({ type: 'upto', ex: run.ex, t: now - run.t0 });
     }
-    if (now - this.lastPing > 500) { this.lastPing = now; net.send({ type: 'ping' }); }
+    if (now - this.lastPing > 500) { this.lastPing = now; net.send({ type: 'ping', at: now }); }
     const silent = now - this.lastRemoteHeard;
     if (this.phase === 'exchange' && silent > 3000) {
       this.phase = 'waiting';
@@ -919,8 +940,17 @@ export class Duel {
         this.exCounter = m.ex;
         this.hiccup = false;
         this.renderHud();
-        this.begin(m.ex, m.plan, performance.now() + m.lead);
+        // the host started its clock when it sent this: take off the one-way trip so both start together
+        this.begin(m.ex, m.plan, performance.now() + m.lead - this.rtt / 2);
         break;
+      case 'ping':
+        if (m.at !== undefined) this.setup.net!.send({ type: 'pong', at: m.at });
+        break;
+      case 'pong': {
+        const sample = performance.now() - m.at;
+        this.rtt = this.rtt === 0 ? sample : this.rtt * 0.8 + sample * 0.2;
+        break;
+      }
       case 'input':
         if (this.run && m.ex === this.run.ex) {
           this.run.logs[remote].push(m.ev);
