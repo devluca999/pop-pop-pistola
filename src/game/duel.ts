@@ -89,7 +89,12 @@ export class Duel {
     ctx.input.soloPlayer = setup.mode === 'local' ? 0 : setup.localView;
     this.unsub.push(ctx.input.onGame((e) => this.onInput(e)));
     this.unsub.push(ctx.input.onMenu((m) => { if (m === 'back') this.togglePause(); }));
-    if (setup.net) this.unsub.push(setup.net.on((m) => this.onNet(m)));
+    if (setup.net) {
+      this.unsub.push(setup.net.on((m) => this.onNet(m)));
+      // Heartbeats run on a timer, not the render loop, so a backgrounded tab keeps talking.
+      const iv = window.setInterval(() => this.netTick(performance.now()), 50);
+      this.unsub.push(() => clearInterval(iv));
+    }
 
     ctx.audio.music('duel');
     ctx.audio.wind(true);
@@ -251,7 +256,6 @@ export class Duel {
     for (const t of [...this.timers]) if (now >= t.at) { this.timers.splice(this.timers.indexOf(t), 1); t.fn(); }
     this.updateWash();
     if (this.phase === 'paused') return;
-    if (this.setup.mode === 'online') this.netTick(now);
     const run = this.run;
     if (!run) return;
     const t = now - run.t0;
@@ -756,10 +760,9 @@ export class Duel {
   private togglePause() {
     if (this.phase === 'over') return;
     if (this.setup.mode === 'online') {
-      if (this.phase === 'paused') { this.phase = this.prevPhase; document.getElementById('pause')?.remove(); return; }
-      this.prevPhase = this.phase;
-      this.showPause(true);
-      this.phase = 'paused';
+      // Online can't pause: the overlay only asks whether to leave, and the duel keeps running.
+      const open = document.getElementById('pause');
+      if (open) open.remove(); else this.showPause(true);
       return;
     }
     if (this.phase === 'paused') {
@@ -801,7 +804,7 @@ export class Duel {
   private netTick(now: number) {
     const run = this.run;
     const net = this.setup.net!;
-    if (run && (this.phase === 'exchange' || this.phase === 'paused') && now - run.lastUpSent > 80) {
+    if (run && this.phase === 'exchange' && now - run.lastUpSent > 80) {
       run.lastUpSent = now;
       net.send({ type: 'upto', ex: run.ex, t: now - run.t0 });
     }
@@ -888,6 +891,9 @@ export class Duel {
     if (this.disposed) return;
     this.disposed = true;
     for (const u of this.unsub) u();
+    // Menus and local select expect both keyboard halves again.
+    this.ctx.input.twoPlayers = true;
+    this.ctx.input.soloPlayer = 0;
     this.ctx.audio.heartbeat(false);
     this.ctx.stage.setPost({ washLeft: 0, washRight: 0, flash: 0 });
     this.root.remove();
