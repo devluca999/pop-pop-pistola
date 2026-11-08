@@ -37,7 +37,7 @@ export function defaultSettings(): Settings {
     keys: structuredClone(DEFAULT_KEYS),
     pads: structuredClone(DEFAULT_PADS),
     filter: 'color',
-    crt: true,
+    crt: false,
     dither: 1,
     reduceFlashing: false,
     reducedMotion: false,

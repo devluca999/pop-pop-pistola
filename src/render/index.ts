@@ -7,8 +7,14 @@ import { Particles, rand, randDir } from './fx';
 import { PostPass } from './post';
 import { C } from './materials';
 
+/** Design units of the 16:9 layout (the UI overlay measures in 1/320ths of the canvas width). */
 export const RES_W = 320;
 export const RES_H = 180;
+/** Internal scene resolution bounds (width); height is always 9/16 of it. */
+const INTERNAL_MIN_W = 640;
+const INTERNAL_MAX_W = 1600;
+/** Output (post pass) resolution cap, for perf on huge screens. */
+const OUTPUT_MAX_W = 2560;
 
 const NEAR_Z = 3.0;
 const FAR_Z = -2.5;
@@ -51,30 +57,40 @@ export class Stage {
   private opts: ViewOptions = { shake: true, reducedMotion: false, reduceFlashing: false };
   private tmp = new THREE.Vector3();
   private coughCooldown = 0;
+  private canvas: HTMLCanvasElement;
+  private outW = 0;
+  private outH = 0;
 
   constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(1);
-    this.renderer.setSize(RES_W, RES_H, false);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.BasicShadowMap;
-    canvas.style.imageRendering = 'pixelated';
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    canvas.style.imageRendering = 'auto';
 
-    this.scene.background = new THREE.Color(C.sky);
-    this.scene.fog = new THREE.Fog(C.skyHaze, 30, 120);
+    this.scene.background = skyGradient();
+    this.scene.fog = new THREE.Fog(C.skyHaze, 34, 130);
 
-    const hemi = new THREE.HemisphereLight(0xf4f0e4, 0x9c7650, 1.55);
+    // fill: bleached sky above, warm dirt bounce below
+    const hemi = new THREE.HemisphereLight(0xeef2f0, 0xb08a62, 1.1);
     this.scene.add(hemi);
-    // high noon: sun almost straight overhead, tipped toward the camera so faces read
-    this.sun = new THREE.DirectionalLight(0xfff6e0, 3.1);
+    // warm key: high noon sun almost straight overhead, tipped toward the camera so faces read
+    this.sun = new THREE.DirectionalLight(0xffeccc, 3.6);
     this.sun.position.set(1.2, 14, 3.5);
     this.sun.target.position.set(0, 0, 0);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(1024, 1024);
+    this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
     sc.left = -12; sc.right = 12; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 40;
-    this.sun.shadow.bias = -0.002;
+    this.sun.shadow.bias = -0.0008;
+    this.sun.shadow.normalBias = 0.02;
+    this.sun.shadow.radius = 2.5;
     this.scene.add(this.sun, this.sun.target);
+    // cool back light from down the street: outlines silhouettes against the bright ground
+    const back = new THREE.DirectionalLight(0xdfe8ff, 0.9);
+    back.position.set(-2, 4, -12);
+    this.scene.add(back);
     this.scene.add(this.flashLight);
 
     this.scene.add(this.town.group);
@@ -106,7 +122,24 @@ export class Stage {
     this.scene.add(this.cloud);
 
     this.setDuelists('hector', 'dusty');
+    this.resizeIfNeeded();
     this.updateCamera(0);
+  }
+
+  /** Match render sizes to the canvas's on-screen size (devicePixelRatio aware). */
+  private resizeIfNeeded(): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const cssW = rect.width > 0 ? rect.width : Math.min(window.innerWidth, (window.innerHeight * 16) / 9);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const outW = Math.max(INTERNAL_MIN_W, Math.min(OUTPUT_MAX_W, Math.round(cssW * dpr)));
+    const outH = Math.round((outW * 9) / 16);
+    if (outW === this.outW && outH === this.outH) return;
+    this.outW = outW;
+    this.outH = outH;
+    const inW = Math.max(INTERNAL_MIN_W, Math.min(INTERNAL_MAX_W, Math.round(outW / 2)));
+    const inH = Math.round((inW * 9) / 16);
+    this.renderer.setSize(outW, outH, false);
+    this.post.resize(inW, inH, outW / inW);
   }
 
   // ------------------------------------------------------------ duelists
@@ -394,6 +427,7 @@ export class Stage {
     }
 
     this.updateCamera(dt);
+    this.resizeIfNeeded();
 
     this.renderer.setRenderTarget(this.post.target);
     this.renderer.render(this.scene, this.camera);
@@ -406,15 +440,34 @@ export class Stage {
   }
 }
 
-/** Scale the 320x180 canvas to the largest integer multiple that fits the window, centred. */
+/** Size the canvas to the largest centred 16:9 box in the window (smooth, non-integer scaling). */
 export function fitCanvas(canvas: HTMLCanvasElement): void {
-  const s = Math.max(1, Math.floor(Math.min(window.innerWidth / RES_W, window.innerHeight / RES_H)));
-  const w = RES_W * s;
-  const h = RES_H * s;
+  const w = Math.floor(Math.min(window.innerWidth, (window.innerHeight * 16) / 9));
+  const h = Math.floor((w * 9) / 16);
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
   canvas.style.position = 'absolute';
   canvas.style.left = `${Math.floor((window.innerWidth - w) / 2)}px`;
   canvas.style.top = `${Math.floor((window.innerHeight - h) / 2)}px`;
-  canvas.style.imageRendering = 'pixelated';
+  canvas.style.imageRendering = 'auto';
+}
+
+/** Vertical sky gradient: pale blue zenith fading to a bleached, hazy horizon. */
+function skyGradient(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#9fbfd0');
+  grd.addColorStop(0.35, '#c9dbe0');
+  grd.addColorStop(0.62, '#ece9dc');
+  grd.addColorStop(0.78, '#f4ead4');
+  grd.addColorStop(1, '#efe0c0');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.LinearFilter;
+  return t;
 }

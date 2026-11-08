@@ -3,8 +3,11 @@ import type { NetLink, NetMsg } from './types';
 const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
+/** Same-browser test transport (two tabs), enabled with ?loopback=1. Never used in normal play. */
+const LOOPBACK = typeof location !== 'undefined' && new URLSearchParams(location.search).has('loopback');
+
 export function onlineConfigured(): boolean {
-  return !!URL && !!KEY;
+  return LOOPBACK || (!!URL && !!KEY);
 }
 
 const WORDS = ['DUSK', 'MESA', 'COLT', 'SAGE', 'DUST', 'BELL', 'SPUR', 'MULE', 'CROW', 'TUMB', 'NOON', 'GULCH'];
@@ -34,6 +37,7 @@ export interface Room extends NetLink {
  */
 export async function openRoom(code: string, role: 'host' | 'guest'): Promise<Room> {
   if (!onlineConfigured()) throw new Error('Online unavailable: no server configured');
+  if (LOOPBACK) return openLoopback(code, role);
   const { createClient } = await import('@supabase/supabase-js');
   const client = createClient(URL!, KEY!, { realtime: { params: { eventsPerSecond: 40 } }, auth: { persistSession: false } });
   const me = Math.random().toString(36).slice(2);
@@ -98,4 +102,31 @@ export async function openRoom(code: string, role: 'host' | 'guest'): Promise<Ro
     });
   });
   return room;
+}
+
+function openLoopback(code: string, role: 'host' | 'guest'): Promise<Room> {
+  const bc = new BroadcastChannel(`pop-pop-pistola:${code}`);
+  const msgL: ((m: NetMsg) => void)[] = [];
+  const stL: ((s: RoomStatus) => void)[] = [];
+  let lastSeen = 0;
+  const room: Room = {
+    code, role, status: 'waiting',
+    send(m) { bc.postMessage({ from: role, m }); },
+    on(f) { msgL.push(f); return () => { const i = msgL.indexOf(f); if (i >= 0) msgL.splice(i, 1); }; },
+    onStatus(f) { stL.push(f); return () => { const i = stL.indexOf(f); if (i >= 0) stL.splice(i, 1); }; },
+    leave() { clearInterval(iv); bc.postMessage({ from: role, m: { type: 'bye' } }); bc.close(); },
+  };
+  const setStatus = (st: RoomStatus) => { if (room.status !== st) { room.status = st; for (const f of [...stL]) f(st); } };
+  bc.onmessage = (e) => {
+    const { from, m, presence } = e.data as { from: string; m?: NetMsg; presence?: boolean };
+    if (from === role) return;
+    lastSeen = Date.now();
+    if (room.status !== 'ready') setStatus('ready');
+    if (!presence && m) for (const f of [...msgL]) f(m);
+  };
+  const iv = setInterval(() => {
+    bc.postMessage({ from: role, presence: true });
+    if (room.status === 'ready' && Date.now() - lastSeen > 4000) setStatus('lost');
+  }, 300);
+  return Promise.resolve(room);
 }

@@ -21,3 +21,10 @@ Calls made while building autonomously. Format: decision — why — how to reve
 - Will of God choice: heal key = Full heal (once per match), draw key or timeout = Vaporize. CPU always vaporizes (it ends the match).
 - Both duelists hitting zero in the same trade = a draw game.
 - Dusty's smoke appears after any exchange where he drew (even when blinded: his shot still goes off, wide).
+- **Look, revised by owner:** the scene renders smooth and high-res (about half the display resolution, MSAA, soft high-noon shadows, rich gradients), then the Bayer dither goes on top as the only retro element. Dither is always on: the strength slider stops at 35% — raise `DITHER_MIN` in `src/render/post.ts` to make it stronger.
+- `map.png` (layout reference) was never found in the refs zip or the folder, so the street layout follows the written brief — drop it in `refs/` and ask for a layout pass.
+- Character select: on a shared screen the cursors are visible, but a pick turns into "LOCKED" and every portrait only reveals once both lock. CPU picks at random; online picks reveal when both lock.
+- Default controls: P1 Q W E A S D (draw keys), Z heal, X feint. P2 U I O J K L, M heal, `,` feint. Pads: A B X Y LB RB, LT heal, RT feint. Menus: arrows/Enter/Esc or d-pad/A/B.
+- The drum roll plays for the first ~1.6s of the standoff, not right up to the bell, so it can't be used to time the bell.
+- Online: host generates each exchange plan and sends it with the match state (keeps both clients in sync). Each client streams its inputs (times measured on its own clock from its own exchange start) plus an "up to" heartbeat every 80ms; results are resolved with now = min(local time, rival's heartbeat). Over 3s of silence = "connection hiccup", exchange restarts once the rival is back; 20s = rival left.
+- The CPU always picks Vaporize on Will of God (it wins the match).

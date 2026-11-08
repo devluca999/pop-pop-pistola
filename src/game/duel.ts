@@ -202,13 +202,14 @@ export class Duel {
     audio.sfx('spurs');
     this.after(500, () => audio.voice(this.state.players[1].character, 'taunt', { pan: this.pan(1) }));
     this.after(1100, () => audio.voice(this.state.players[0].character, 'taunt', { pan: this.pan(0) }));
-    this.after(1900, () => this.nextExchange());
+    this.after(1900, () => { if (!this.run) this.nextExchange(); });
   }
 
   private nextExchange() {
     if (this.disposed) return;
     if (this.setup.mode === 'online') {
-      if (!this.setup.isHost) { this.phase = 'waiting'; return; }
+      // Guests wait for the host's plan (it may already have arrived during the intro).
+      if (!this.setup.isHost) { if (this.phase !== 'exchange') this.phase = 'waiting'; return; }
       const plan = generatePlan(randomSeed());
       const ex = ++this.exCounter;
       this.setup.net!.send({ type: 'plan', ex, plan, state: this.state, lead: LEAD_MS });

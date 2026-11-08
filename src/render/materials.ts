@@ -3,7 +3,7 @@ import * as THREE from 'three';
 /** Core palette (sRGB hex). Kept small so everything reads as one limited set. */
 export const C = {
   sky: 0xeef0e4,
-  skyHaze: 0xe8e4d4,
+  skyHaze: 0xf1e7d2,
   dirt: 0xb69a78,
   dirtDark: 0x8f7658,
   dirtLight: 0xcdb592,
@@ -51,6 +51,26 @@ export const C = {
 } as const;
 
 const lamCache = new Map<number, THREE.MeshLambertMaterial>();
+/** Shared rim-light settings (warm fresnel edge glow, reads like bounced noon light). */
+export const RIM = { color: new THREE.Color(0xfff1d6), strength: { value: 0.32 } };
+
+/** Adds a cheap fresnel rim term to a Lambert material so silhouettes pop. */
+export function addRim(m: THREE.MeshLambertMaterial): void {
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.rimColor = { value: RIM.color };
+    shader.uniforms.rimStrength = RIM.strength;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform vec3 rimColor;\nuniform float rimStrength;\nvoid main() {')
+      .replace(
+        '#include <opaque_fragment>',
+        `float rimF = 1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+        outgoingLight += rimColor * diffuseColor.rgb * pow(rimF, 3.0) * rimStrength;
+        #include <opaque_fragment>`,
+      );
+  };
+  m.customProgramCacheKey = () => 'rim-lambert';
+}
+
 const basicCache = new Map<number, THREE.MeshBasicMaterial>();
 
 /** Shared flat-shaded Lambert material. */
@@ -58,6 +78,7 @@ export function lam(hex: number): THREE.MeshLambertMaterial {
   let m = lamCache.get(hex);
   if (!m) {
     m = new THREE.MeshLambertMaterial({ color: hex, flatShading: true });
+    addRim(m);
     lamCache.set(hex, m);
   }
   return m;
